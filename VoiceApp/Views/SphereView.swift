@@ -128,7 +128,7 @@ final class LivingSphere {
     }
 
     private func createParticles() {
-        let count = 8000
+        let count = 3000
         let goldenRatio = (1.0 + sqrt(5.0)) / 2.0
 
         particles = (0..<count).map { i in

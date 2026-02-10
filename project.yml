@@ -8,6 +8,9 @@ options:
 packages:
   mlx-audio-ios:
     path: Packages/mlx-audio-ios
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    branch: main
 
 targets:
   VoiceApp:
@@ -29,6 +32,10 @@ targets:
     dependencies:
       - package: mlx-audio-ios
         product: MLXAudio
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
       - sdk: Metal.framework
       - sdk: MetalPerformanceShadersGraph.framework
       - sdk: MetalPerformanceShaders.framework

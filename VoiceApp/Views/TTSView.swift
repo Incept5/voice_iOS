@@ -1,126 +1,204 @@
 import SwiftUI
 
-/// Text-to-speech view with particle sphere animation
+/// Demo-focused TTS view: big sphere, one-tap Go pipeline
 struct TTSView: View {
     @State private var manager = VoiceCloningManager.shared
-    @State private var inputText = ""
-    @FocusState private var isTextFieldFocused: Bool
+    @State private var personality = PersonalityManager.shared
+    @State private var topicText = ""
+    @State private var isRunningPipeline = false
+    @FocusState private var topicFocused: Bool
+
+    private var captionText: String {
+        if let error = manager.error ?? personality.error {
+            return error
+        }
+        if manager.isDownloading {
+            return "Downloading TTS model… \(Int(manager.downloadProgress * 100))%"
+        }
+        if personality.isDownloading {
+            return "Downloading LLM… \(Int(personality.downloadProgress * 100))%"
+        }
+        if personality.isGenerating || !personality.generatedText.isEmpty {
+            return personality.generatedText
+        }
+        return ""
+    }
+
+    private var captionIsError: Bool {
+        (manager.error ?? personality.error) != nil
+    }
+
+    private var goDisabled: Bool {
+        topicText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || isRunningPipeline
+    }
 
     var body: some View {
         NavigationStack {
-            GeometryReader { geometry in
-                VStack(spacing: 0) {
-                    // MARK: - Sphere (flexible height)
+            VStack(spacing: 0) {
+                // MARK: - Sphere + Caption
+                ZStack(alignment: .bottom) {
                     SphereView(
                         isActive: manager.isSpeaking,
                         audioLevel: manager.audioLevel
                     )
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 160)
-                    .background(Color.black)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    // MARK: - Status
-                    if manager.isDownloading {
-                        ProgressView(value: manager.downloadProgress) {
-                            Text("Downloading model...")
-                                .font(.caption)
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 8)
+                    if !captionText.isEmpty {
+                        Text(captionText)
+                            .font(.subheadline)
+                            .foregroundStyle(captionIsError ? .red : .white)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .background(.ultraThinMaterial.opacity(0.6))
                     }
+                }
+                .background(Color.black)
+                .onTapGesture {
+                    topicFocused = false
+                }
 
-                    if let error = manager.error {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                    }
+                // MARK: - Controls
+                VStack(spacing: 12) {
+                    personalityPicker
 
                     if let voiceName = manager.currentVoiceProfileName {
-                        Text("Voice: \(voiceName)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 8)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    // MARK: - Input
-                    VStack(spacing: 12) {
-                        TextField("Enter text to speak...", text: $inputText, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .lineLimit(2...4)
-                            .padding(12)
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                            .focused($isTextFieldFocused)
-                            .submitLabel(.done)
-                            .onSubmit { generate() }
-
-                        HStack(spacing: 12) {
-                            if manager.isSpeaking {
-                                Button {
-                                    manager.stop()
-                                } label: {
-                                    Label("Stop", systemImage: "stop.fill")
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.red)
-                                .controlSize(.large)
-                            } else {
-                                Button {
-                                    generate()
-                                } label: {
-                                    Label("Speak", systemImage: "play.fill")
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.large)
-                                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !manager.isModelLoaded)
-                            }
+                        HStack(spacing: 4) {
+                            Image(systemName: "waveform")
+                            Text(voiceName)
                         }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                    .padding()
+
+                    topicInput
+                    goStopButton
                 }
-            }
-            .onTapGesture {
-                isTextFieldFocused = false
+                .padding()
+                .layoutPriority(1)
             }
             .navigationTitle("Speak")
             .toolbar {
-                if isTextFieldFocused {
+                if topicFocused {
                     ToolbarItemGroup(placement: .keyboard) {
                         Spacer()
-                        Button("Done") {
-                            isTextFieldFocused = false
-                        }
-                    }
-                }
-                if !manager.isModelLoaded && !manager.isDownloading {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            Task { try? await manager.loadModel() }
-                        } label: {
-                            Label(
-                                manager.isModelCached ? "Load" : "Download",
-                                systemImage: "arrow.down.circle"
-                            )
-                        }
+                        Button("Done") { topicFocused = false }
                     }
                 }
             }
         }
     }
 
-    private func generate() {
-        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        isTextFieldFocused = false
+    // MARK: - Personality Picker
+
+    private var personalityPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Personality.allCases) { p in
+                    Button {
+                        personality.setPersonality(p)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(p.icon)
+                            Text(p.rawValue)
+                                .font(.subheadline)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            personality.selectedPersonality == p
+                                ? Color.accentColor
+                                : Color(.systemGray5)
+                        )
+                        .foregroundStyle(
+                            personality.selectedPersonality == p
+                                ? .white
+                                : .primary
+                        )
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - Topic Input
+
+    private var topicInput: some View {
+        TextField("What should they talk about?", text: $topicText)
+            .textFieldStyle(.plain)
+            .padding(12)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .focused($topicFocused)
+            .submitLabel(.go)
+            .onSubmit { go() }
+    }
+
+    // MARK: - Go / Stop Button
+
+    @ViewBuilder
+    private var goStopButton: some View {
+        if manager.isSpeaking {
+            Button {
+                stopPipeline()
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .controlSize(.large)
+        } else {
+            Button {
+                go()
+            } label: {
+                Label(
+                    isRunningPipeline ? "Generating…" : "Go",
+                    systemImage: isRunningPipeline ? "ellipsis" : "sparkles"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(goDisabled)
+        }
+    }
+
+    // MARK: - Actions
+
+    private func go() {
+        let topic = topicText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !topic.isEmpty, !isRunningPipeline else { return }
+        topicFocused = false
+
+        isRunningPipeline = true
 
         Task {
-            await manager.speak(text)
+            // 1. Generate text with LLM
+            manager.unloadModel()
+            await personality.generate(prompt: topic)
+
+            let text = personality.generatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                isRunningPipeline = false
+                return
+            }
+
+            // 2. Speak with TTS (uses active voice profile automatically)
+            personality.unloadModel()
+            await manager.speak(text, voiceProfileName: manager.currentVoiceProfileName)
+
+            isRunningPipeline = false
         }
+    }
+
+    private func stopPipeline() {
+        manager.stop()
+        isRunningPipeline = false
     }
 }
 

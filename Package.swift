@@ -10,13 +10,16 @@ let package = Package(
         .library(name: "VoiceApp", targets: ["VoiceApp"])
     ],
     dependencies: [
-        .package(path: "Packages/mlx-audio-ios")
+        .package(path: "Packages/mlx-audio-ios"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
     ],
     targets: [
         .target(
             name: "VoiceApp",
             dependencies: [
-                .product(name: "MLXAudio", package: "mlx-audio-ios")
+                .product(name: "MLXAudio", package: "mlx-audio-ios"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
             ],
             path: "VoiceApp",
             swiftSettings: [

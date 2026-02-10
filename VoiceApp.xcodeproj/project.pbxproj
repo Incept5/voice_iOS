@@ -8,16 +8,20 @@
 
 /* Begin PBXBuildFile section */
 		1C02795EE8EF8E347700D39A /* VoiceCloningManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F358EDCB85B76CCD7CEC5325 /* VoiceCloningManager.swift */; };
+		220DF723BB58B334D60C81CE /* PersonalityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A773BB21C0425B55D6815F3 /* PersonalityManager.swift */; };
 		2607CCF9F62BF71308AFC536 /* Color+Hex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73B0ACA568D4574485CEEE2E /* Color+Hex.swift */; };
 		2770854BDBF1A20A74D40630 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2538931BFC44A299FE9FDD1D /* ContentView.swift */; };
 		40752FE003D53015B63495C7 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 22081DDCF763E0FFE766CB80 /* Metal.framework */; };
 		4346812B8C14378273CC46FF /* MetalPerformanceShadersGraph.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5A90F0AA6F3B2CBCC165E663 /* MetalPerformanceShadersGraph.framework */; };
 		44361773386E23C8A01907DF /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F738DF7306ED405E6CA87294 /* Accelerate.framework */; };
+		512030C737EE04AF78E751B0 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 2BCDE06E1D33AA960CB6AE33 /* MLXLLM */; };
 		71769EB00FEA47EB86C14523 /* TTSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165E6D2BB59A562F70941647 /* TTSView.swift */; };
+		7EE6124E5179BD822302BE5D /* Personality.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165BD9F50A00C2B9DB72C1C8 /* Personality.swift */; };
 		B60243D091973374F04F5886 /* VoiceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB13B59DA4F31C5B8ED378B /* VoiceApp.swift */; };
 		BCF230640B972D87B0EB96E4 /* VoiceSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20387185BF79CF2BE2AA2F66 /* VoiceSetupView.swift */; };
 		BF8F5E5C90AD7111067EA488 /* SphereView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16446D7209C704C2C1779B7E /* SphereView.swift */; };
 		C4368B48ACA1B2150F874361 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B017B18D4DEFE21929CAD33 /* AudioRecorder.swift */; };
+		C87B30C7B5DA65EB58E64636 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = B853A64B7E9720E8E5412067 /* MLXLMCommon */; };
 		D416A3DDF89DF954C6974CF4 /* MLXAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D8C97B606B127116EA129340 /* MLXAudio */; };
 		D4938CCA0DAF4277F2EA14D3 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3940AED0DEDF0A577E703FE9 /* AVFoundation.framework */; };
 		F3C16F7EDDB62F5C945FBA7E /* MetalPerformanceShaders.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C74923F021ADEF0BA03A16B5 /* MetalPerformanceShaders.framework */; };
@@ -26,7 +30,9 @@
 /* Begin PBXFileReference section */
 		0FB13B59DA4F31C5B8ED378B /* VoiceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceApp.swift; sourceTree = "<group>"; };
 		16446D7209C704C2C1779B7E /* SphereView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SphereView.swift; sourceTree = "<group>"; };
+		165BD9F50A00C2B9DB72C1C8 /* Personality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Personality.swift; sourceTree = "<group>"; };
 		165E6D2BB59A562F70941647 /* TTSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSView.swift; sourceTree = "<group>"; };
+		1A773BB21C0425B55D6815F3 /* PersonalityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalityManager.swift; sourceTree = "<group>"; };
 		20387185BF79CF2BE2AA2F66 /* VoiceSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSetupView.swift; sourceTree = "<group>"; };
 		22081DDCF763E0FFE766CB80 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		2538931BFC44A299FE9FDD1D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -47,6 +53,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				D416A3DDF89DF954C6974CF4 /* MLXAudio in Frameworks */,
+				512030C737EE04AF78E751B0 /* MLXLLM in Frameworks */,
+				C87B30C7B5DA65EB58E64636 /* MLXLMCommon in Frameworks */,
 				40752FE003D53015B63495C7 /* Metal.framework in Frameworks */,
 				4346812B8C14378273CC46FF /* MetalPerformanceShadersGraph.framework in Frameworks */,
 				F3C16F7EDDB62F5C945FBA7E /* MetalPerformanceShaders.framework in Frameworks */,
@@ -62,6 +70,7 @@
 			isa = PBXGroup;
 			children = (
 				9C077F4BF272121C24535FD7 /* App */,
+				A7193636255C5A1F32153847 /* Models */,
 				1E3B546D1729097B7F4BD0CC /* Services */,
 				354B493F14A37903060ECF6A /* Utilities */,
 				AF3ECBFE721A3295E54D030A /* Views */,
@@ -73,6 +82,7 @@
 			isa = PBXGroup;
 			children = (
 				8B017B18D4DEFE21929CAD33 /* AudioRecorder.swift */,
+				1A773BB21C0425B55D6815F3 /* PersonalityManager.swift */,
 				F358EDCB85B76CCD7CEC5325 /* VoiceCloningManager.swift */,
 			);
 			path = Services;
@@ -122,6 +132,14 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		A7193636255C5A1F32153847 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				165BD9F50A00C2B9DB72C1C8 /* Personality.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
 		AF3ECBFE721A3295E54D030A /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -160,6 +178,8 @@
 			name = VoiceApp;
 			packageProductDependencies = (
 				D8C97B606B127116EA129340 /* MLXAudio */,
+				2BCDE06E1D33AA960CB6AE33 /* MLXLLM */,
+				B853A64B7E9720E8E5412067 /* MLXLMCommon */,
 			);
 			productName = VoiceApp;
 			productReference = 531815037098F36198E7F6C1 /* VoiceApp.app */;
@@ -191,6 +211,7 @@
 			mainGroup = FDE30C94E313BA0C7631B276;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				8383899778C702C7D9A39BF2 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 				27271A064FC7F5F4B47B2897 /* XCLocalSwiftPackageReference "Packages/mlx-audio-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -210,6 +231,8 @@
 				C4368B48ACA1B2150F874361 /* AudioRecorder.swift in Sources */,
 				2607CCF9F62BF71308AFC536 /* Color+Hex.swift in Sources */,
 				2770854BDBF1A20A74D40630 /* ContentView.swift in Sources */,
+				7EE6124E5179BD822302BE5D /* Personality.swift in Sources */,
+				220DF723BB58B334D60C81CE /* PersonalityManager.swift in Sources */,
 				BF8F5E5C90AD7111067EA488 /* SphereView.swift in Sources */,
 				71769EB00FEA47EB86C14523 /* TTSView.swift in Sources */,
 				B60243D091973374F04F5886 /* VoiceApp.swift in Sources */,
@@ -412,7 +435,28 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		8383899778C702C7D9A39BF2 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		2BCDE06E1D33AA960CB6AE33 /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8383899778C702C7D9A39BF2 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		B853A64B7E9720E8E5412067 /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8383899778C702C7D9A39BF2 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
 		D8C97B606B127116EA129340 /* MLXAudio */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MLXAudio;

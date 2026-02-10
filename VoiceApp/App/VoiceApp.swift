@@ -1,10 +1,12 @@
 import SwiftUI
 import AVFoundation
+import MLXAudio
 
 @main
 struct VoiceApp: App {
     init() {
         configureAudioSession()
+        MLXMemory.configure(cacheLimit: 256 * 1024 * 1024)
     }
 
     var body: some Scene {

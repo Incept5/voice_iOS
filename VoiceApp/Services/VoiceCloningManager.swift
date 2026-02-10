@@ -62,6 +62,8 @@ final class VoiceCloningManager {
     private let profilesKey = "voiceProfiles_v1"
     private var _isModelCached = false
 
+    var quantization: ChatterboxTurboQuantization = .q4
+
     var isModelCached: Bool { _isModelCached }
 
     var needsDownload: Bool {
@@ -72,9 +74,20 @@ final class VoiceCloningManager {
 
     init() {
         loadSavedProfiles()
+        currentVoiceProfileName = UserDefaults.standard.string(forKey: "activeVoiceProfile")
+        // Validate persisted profile still exists, auto-select first if not
+        if currentVoiceProfileName == nil
+            || !availableProfiles.contains(where: { $0.name == currentVoiceProfileName }) {
+            currentVoiceProfileName = availableProfiles.first?.name
+        }
+        if let saved = UserDefaults.standard.string(forKey: "ttsQuantization"),
+           let q = ChatterboxTurboQuantization(rawValue: saved) {
+            quantization = q
+        }
         if UserDefaults.standard.bool(forKey: "voiceModelDownloaded") {
             _isModelCached = true
         }
+        print("[VoiceCloning] Active voice profile: \(currentVoiceProfileName ?? "none")")
     }
 
     // MARK: - Profiles Directory
@@ -103,7 +116,7 @@ final class VoiceCloningManager {
         print("[VoiceCloning] Loading model...")
 
         do {
-            engine = ChatterboxTurboEngine(quantization: .q4)
+            engine = ChatterboxTurboEngine(quantization: quantization)
 
             try await engine?.load { [weak self] progress in
                 Task { @MainActor [weak self] in
@@ -119,11 +132,28 @@ final class VoiceCloningManager {
             print("[VoiceCloning] Model ready")
 
             await prepareAllReferenceAudio()
+            await warmup()
         } catch {
             isDownloading = false
             self.error = "Failed to load model: \(error.localizedDescription)"
             throw error
         }
+    }
+
+    func setQuantization(_ value: ChatterboxTurboQuantization) {
+        guard value != quantization else { return }
+        quantization = value
+        UserDefaults.standard.set(value.rawValue, forKey: "ttsQuantization")
+        unloadModel()
+    }
+
+    func unloadModel() {
+        stop()
+        engine = nil
+        preparedVoices.removeAll()
+        isModelLoaded = false
+        MLXMemory.clearCache()
+        print("[VoiceCloning] Model unloaded")
     }
 
     // MARK: - Voice Profile Management
@@ -161,13 +191,14 @@ final class VoiceCloningManager {
         try? FileManager.default.removeItem(atPath: profile.audioFilePath)
         availableProfiles.removeAll { $0.id == profile.id }
         if currentVoiceProfileName == profile.name {
-            currentVoiceProfileName = nil
+            setActiveProfile(nil)
         }
         saveProfiles()
     }
 
     func setActiveProfile(_ profile: VoiceProfile?) {
         currentVoiceProfileName = profile?.name
+        UserDefaults.standard.set(profile?.name, forKey: "activeVoiceProfile")
     }
 
     private func loadSavedProfiles() {
@@ -182,15 +213,35 @@ final class VoiceCloningManager {
         try? data.write(to: profilesFileURL, options: .atomic)
     }
 
+    /// Resolve audio file path — handles stale absolute paths from container UUID changes
+    private func resolveAudioPath(for profile: VoiceProfile) -> URL? {
+        // Try stored path first
+        let storedPath = profile.audioFilePath
+        if FileManager.default.fileExists(atPath: storedPath) {
+            return URL(fileURLWithPath: storedPath)
+        }
+        // Fall back: reconstruct from filename in current voice_profiles directory
+        let filename = URL(fileURLWithPath: storedPath).lastPathComponent
+        let resolved = voiceProfilesDirectory.appendingPathComponent(filename)
+        if FileManager.default.fileExists(atPath: resolved.path) {
+            print("[VoiceCloning] Resolved stale path for '\(profile.name)' → \(resolved.path)")
+            return resolved
+        }
+        print("[VoiceCloning] Audio file missing for '\(profile.name)': \(filename)")
+        return nil
+    }
+
     private func getReferenceAudio(for profileName: String?) async throws -> ChatterboxTurboReferenceAudio? {
         guard let name = profileName,
               let profile = availableProfiles.first(where: { $0.name == name }),
-              let engine else { return nil }
+              let engine else {
+            print("[VoiceCloning] getReferenceAudio: profileName=\(profileName ?? "nil"), profiles=\(availableProfiles.count), engine=\(engine != nil)")
+            return nil
+        }
 
         if let cached = preparedVoices[name] { return cached }
 
-        let audioURL = URL(fileURLWithPath: profile.audioFilePath)
-        guard FileManager.default.fileExists(atPath: profile.audioFilePath) else { return nil }
+        guard let audioURL = resolveAudioPath(for: profile) else { return nil }
 
         let ref = try await engine.prepareReferenceAudio(from: audioURL)
         preparedVoices[name] = ref
@@ -202,15 +253,31 @@ final class VoiceCloningManager {
 
         for profile in availableProfiles {
             guard preparedVoices[profile.name] == nil else { continue }
-            let audioURL = URL(fileURLWithPath: profile.audioFilePath)
-            guard FileManager.default.fileExists(atPath: profile.audioFilePath) else { continue }
+            guard let audioURL = resolveAudioPath(for: profile) else { continue }
 
             do {
                 let ref = try await engine.prepareReferenceAudio(from: audioURL)
                 preparedVoices[profile.name] = ref
+                print("[VoiceCloning] Prepared reference audio for '\(profile.name)'")
             } catch {
                 print("[VoiceCloning] Failed to prepare '\(profile.name)': \(error)")
             }
+        }
+    }
+
+    /// Silent warmup: run a tiny generation to prime the compute graph so the first real speak is fast
+    private func warmup() async {
+        guard let engine else { return }
+        print("[VoiceCloning] Warming up TTS...")
+        do {
+            let ref = preparedVoices.values.first
+            let stream = engine.generateStreaming("Hello.", referenceAudio: ref)
+            for try await _ in stream { break } // consume one chunk then stop
+            await engine.stop()
+            MLXMemory.clearCache()
+            print("[VoiceCloning] Warmup complete")
+        } catch {
+            print("[VoiceCloning] Warmup failed (non-fatal): \(error)")
         }
     }
 
