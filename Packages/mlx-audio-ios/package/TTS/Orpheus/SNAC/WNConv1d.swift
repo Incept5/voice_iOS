@@ -1,0 +1,89 @@
+// Copyright ® Canopy Labs (original model implementation)
+// Ported to MLX from https://github.com/canopyai/Orpheus-TTS
+// Copyright © 2024 Prince Canuma and contributors to Blaizzy/mlx-audio
+// Copyright © Anthony DePasquale
+// License: licenses/orpheus.txt
+
+import Foundation
+import MLX
+import MLXNN
+
+/// Conv1d with weight normalization for SNAC decoder
+/// Weight keys: weight_g, weight_v, bias
+class WNConv1d: Module {
+  @ParameterInfo(key: "weight_g") var weightG: MLXArray
+  @ParameterInfo(key: "weight_v") var weightV: MLXArray
+  @ParameterInfo var bias: MLXArray?
+
+  let kernelSize: Int
+  let stride: Int
+  let padding: Int
+  let dilation: Int
+  let groups: Int
+
+  private static func normalizeWeight(_ x: MLXArray, exceptDim: Int = 0) -> MLXArray {
+    guard x.ndim == 3 else {
+      fatalError("Input tensor must have 3 dimensions")
+    }
+    let axes = Array(0 ..< x.ndim).filter { $0 != exceptDim }
+    let xSquared = MLX.pow(x, 2)
+    let sumSquared = MLX.sum(xSquared, axes: axes, keepDims: true)
+    return MLX.sqrt(sumSquared)
+  }
+
+  init(
+    inChannels: Int,
+    outChannels: Int,
+    kernelSize: Int,
+    stride: Int = 1,
+    padding: Int = 0,
+    dilation: Int = 1,
+    groups: Int = 1,
+    bias: Bool = true,
+  ) {
+    self.kernelSize = kernelSize
+    self.stride = stride
+    self.padding = padding
+    self.dilation = dilation
+    self.groups = groups
+
+    // Initialize with placeholder values - will be replaced by model.update(parameters:)
+    let scale = sqrt(1.0 / Double(inChannels * kernelSize))
+    let weightInit = MLXRandom.uniform(
+      low: -scale,
+      high: scale,
+      [outChannels, kernelSize, inChannels / groups],
+    )
+    let normWeight = Self.normalizeWeight(weightInit)
+
+    _weightG.wrappedValue = normWeight
+    _weightV.wrappedValue = weightInit / (normWeight + 1e-12)
+    _bias.wrappedValue = bias ? MLX.zeros([outChannels]) : nil
+  }
+
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
+    // Ensure input is 3D: [batch, in_channels, time]
+    let x3d: MLXArray = if x.ndim == 2 {
+      // [in_channels, time] -> [1, in_channels, time]
+      x.reshaped([1, x.shape[0], x.shape[1]])
+    } else {
+      x
+    }
+    let xT = x3d.transposed(axes: [0, 2, 1]) // [batch, time, in_channels]
+    let normV = Self.normalizeWeight(weightV)
+    let weight = weightG * weightV / (normV + 1e-12)
+    var y = MLX.conv1d(
+      xT,
+      weight,
+      stride: stride,
+      padding: padding,
+      dilation: dilation,
+      groups: groups,
+    )
+    if let bias {
+      y = y + bias
+    }
+    // Output shape is [batch, time, outChannels], transpose to [batch, outChannels, time]
+    return y.transposed(axes: [0, 2, 1])
+  }
+}

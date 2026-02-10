@@ -1,0 +1,536 @@
+// Copyright © OuteAI (original model implementation)
+// Copyright © Anthony DePasquale (MLX port)
+// Ported to MLX from https://github.com/edwko/OuteTTS
+// License: licenses/outetts.txt
+
+import Foundation
+import Hub
+@preconcurrency import MLX
+@preconcurrency import MLXLMCommon
+@preconcurrency import MLXNN
+import MLXRandom
+import Synchronization
+import Tokenizers
+
+// MARK: - OuteTTS Configuration
+
+struct OuteTTSConfig: Sendable {
+  let modelId: String
+  let sampleRate: Int
+  let maxTokens: Int
+  let temperature: Float
+  let topP: Float
+  let topK: Int
+  let minP: Float
+  let repetitionPenalty: Float
+  let repetitionContextSize: Int
+
+  static let `default` = OuteTTSConfig(
+    modelId: "mlx-community/Llama-OuteTTS-1.0-1B-4bit",
+    sampleRate: 24000,
+    maxTokens: 4096,
+    temperature: 0.4,
+    topP: 0.9,
+    topK: 40,
+    minP: 0.05,
+    repetitionPenalty: 1.1,
+    repetitionContextSize: 64,
+  )
+
+  init(
+    modelId: String = "mlx-community/Llama-OuteTTS-1.0-1B-4bit",
+    sampleRate: Int = 24000,
+    maxTokens: Int = 4096,
+    temperature: Float = 0.4,
+    topP: Float = 0.9,
+    topK: Int = 40,
+    minP: Float = 0.05,
+    repetitionPenalty: Float = 1.1,
+    repetitionContextSize: Int = 64,
+  ) {
+    self.modelId = modelId
+    self.sampleRate = sampleRate
+    self.maxTokens = maxTokens
+    self.temperature = temperature
+    self.topP = topP
+    self.topK = topK
+    self.minP = minP
+    self.repetitionPenalty = repetitionPenalty
+    self.repetitionContextSize = repetitionContextSize
+  }
+}
+
+// MARK: - OuteTTS
+
+/// OuteTTS actor providing thread-safe text-to-speech generation.
+///
+/// Use the static `load()` factory method to create an initialized instance.
+actor OuteTTS {
+  private let config: OuteTTSConfig
+  private let model: OuteTTSLMHeadModel
+  private let tokenizer: any Tokenizer
+  // nonisolated(unsafe) because it contains non-Sendable types but is immutable after creation
+  private nonisolated(unsafe) let audioProcessor: OuteTTSAudioProcessor
+  private let promptProcessor: OuteTTSPromptProcessor
+  private let defaultSpeaker: OuteTTSSpeakerProfile?
+  private let eosTokenId: Int
+
+  // MARK: - Initialization
+
+  private init(
+    config: OuteTTSConfig,
+    model: OuteTTSLMHeadModel,
+    tokenizer: any Tokenizer,
+    audioProcessor: OuteTTSAudioProcessor,
+    promptProcessor: OuteTTSPromptProcessor,
+    defaultSpeaker: OuteTTSSpeakerProfile?,
+    eosTokenId: Int,
+  ) {
+    self.config = config
+    self.model = model
+    self.tokenizer = tokenizer
+    self.audioProcessor = audioProcessor
+    self.promptProcessor = promptProcessor
+    self.defaultSpeaker = defaultSpeaker
+    self.eosTokenId = eosTokenId
+  }
+
+  /// Load and initialize an OuteTTS instance.
+  ///
+  /// - Parameters:
+  ///   - config: Configuration for the model
+  ///   - progressHandler: Callback for download progress
+  /// - Returns: A fully initialized OuteTTS actor
+  static func load(
+    config: OuteTTSConfig = .default,
+    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+  ) async throws -> OuteTTS {
+    // Load model and tokenizer
+    let (model, tokenizer) = try await loadOuteTTSModel(
+      modelId: config.modelId,
+      progressHandler: progressHandler,
+    )
+
+    // Get EOS token ID from tokenizer
+    let eosTokenId = tokenizer.convertTokenToId("<|im_end|>") ?? 151_645
+
+    // Load audio processor with codec
+    let audioProcessor = try await OuteTTSAudioProcessor.create(
+      sampleRate: config.sampleRate,
+      progressHandler: progressHandler,
+    )
+
+    // buildTokenMaps caches special token IDs for fast prompt building
+    let promptProcessor = OuteTTSPromptProcessor()
+    promptProcessor.buildTokenMaps(
+      convertTokenToId: { token in
+        tokenizer.convertTokenToId(token)
+      },
+      encode: { text in
+        tokenizer.encode(text: text, addSpecialTokens: false)
+      },
+    )
+
+    // Load default speaker profile from bundle
+    let defaultSpeaker = loadDefaultSpeaker()
+
+    return OuteTTS(
+      config: config,
+      model: model,
+      tokenizer: tokenizer,
+      audioProcessor: audioProcessor,
+      promptProcessor: promptProcessor,
+      defaultSpeaker: defaultSpeaker,
+      eosTokenId: eosTokenId,
+    )
+  }
+
+  // MARK: - Model Loading
+
+  private static func loadOuteTTSModel(
+    modelId: String,
+    progressHandler: @escaping @Sendable (Progress) -> Void,
+  ) async throws -> (OuteTTSLMHeadModel, any Tokenizer) {
+    // Download model files using MLXLMCommon's download helper
+    let configuration = ModelConfiguration(id: modelId, extraEOSTokens: ["<|im_end|>"])
+    let modelDirectory = try await downloadModel(
+      hub: HubApi.shared,
+      configuration: configuration,
+      progressHandler: progressHandler,
+    )
+
+    // Load config
+    let configURL = modelDirectory.appending(component: "config.json")
+    var configData = try Data(contentsOf: configURL)
+
+    // Fix rope_scaling values that may be integers instead of floats
+    if var configDict = try JSONSerialization.jsonObject(with: configData) as? [String: Any],
+       var ropeScaling = configDict["rope_scaling"] as? [String: Any]
+    {
+      for (key, value) in ropeScaling {
+        if let intValue = value as? Int {
+          ropeScaling[key] = Double(intValue)
+        }
+      }
+      configDict["rope_scaling"] = ropeScaling
+      configData = try JSONSerialization.data(withJSONObject: configDict)
+    }
+
+    struct BaseConfig: Codable {
+      let modelType: String
+      let quantization: QuantizationConfig?
+
+      enum CodingKeys: String, CodingKey {
+        case modelType = "model_type"
+        case quantization
+      }
+
+      struct QuantizationConfig: Codable {
+        let groupSize: Int
+        let bits: Int
+
+        enum CodingKeys: String, CodingKey {
+          case groupSize = "group_size"
+          case bits
+        }
+      }
+    }
+
+    let baseConfig = try JSONDecoder().decode(BaseConfig.self, from: configData)
+
+    guard baseConfig.modelType == "llama" else {
+      throw OuteTTSEngineError.generationFailed("Unsupported model type: \(baseConfig.modelType)")
+    }
+
+    let llamaConfig = try JSONDecoder().decode(OuteTTSModelConfig.self, from: configData)
+    let model = OuteTTSLMHeadModel(llamaConfig)
+
+    // Load weights from safetensor files
+    var weights = [String: MLXArray]()
+    let contents = try FileManager.default.contentsOfDirectory(at: modelDirectory, includingPropertiesForKeys: nil)
+    let safetensorFiles = contents.filter { $0.pathExtension == "safetensors" }
+    for url in safetensorFiles {
+      let w = try MLX.loadArrays(url: url)
+      for (key, value) in w {
+        weights[key] = value
+      }
+    }
+
+    // Remap keys: strip "model." prefix from OuteTTS weights
+    var remappedWeights = [String: MLXArray]()
+    for (key, value) in weights {
+      let newKey: String = if key.hasPrefix("model.model.") {
+        String(key.dropFirst(6))
+      } else if key.hasPrefix("model.lm_head.") {
+        String(key.dropFirst(6))
+      } else {
+        key
+      }
+      remappedWeights[newKey] = value
+    }
+
+    // Apply sanitize (removes rotary embeddings)
+    remappedWeights = model.sanitize(weights: remappedWeights)
+
+    // Apply quantization if needed
+    if let quant = baseConfig.quantization {
+      quantize(model: model, groupSize: quant.groupSize, bits: quant.bits) { path, _ in
+        remappedWeights["\(path).scales"] != nil
+      }
+    } else if remappedWeights.keys.contains(where: { $0.contains(".scales") }) {
+      // Fallback: weights have .scales but no quantization config
+      quantize(model: model, groupSize: 64, bits: 4) { path, _ in
+        remappedWeights["\(path).scales"] != nil
+      }
+    }
+
+    // Apply weights to model
+    let parameters = ModuleParameters.unflattened(remappedWeights)
+    try model.update(parameters: parameters, verify: [.all])
+    eval(model)
+
+    // Load tokenizer
+    let tokenizerConfigURL = modelDirectory.appending(component: "tokenizer_config.json")
+    let tokenizerDataURL = modelDirectory.appending(component: "tokenizer.json")
+
+    guard FileManager.default.fileExists(atPath: tokenizerConfigURL.path) else {
+      throw OuteTTSEngineError.generationFailed("tokenizer_config.json not found")
+    }
+    guard FileManager.default.fileExists(atPath: tokenizerDataURL.path) else {
+      throw OuteTTSEngineError.generationFailed("tokenizer.json not found")
+    }
+
+    let tokenizerConfigData = try Data(contentsOf: tokenizerConfigURL)
+    let tokenizerDataData = try Data(contentsOf: tokenizerDataURL)
+
+    let decoder = JSONDecoder()
+    let tokenizerConfig = try decoder.decode(Config.self, from: tokenizerConfigData)
+    let tokenizerData = try decoder.decode(Config.self, from: tokenizerDataData)
+
+    let tokenizer = try PreTrainedTokenizer(
+      tokenizerConfig: tokenizerConfig,
+      tokenizerData: tokenizerData,
+    )
+
+    return (model, tokenizer)
+  }
+
+  /// Load default speaker profile from bundle
+  private static func loadDefaultSpeaker() -> OuteTTSSpeakerProfile? {
+    guard let url = Bundle.module.url(forResource: "default_speaker", withExtension: "json") else {
+      return nil
+    }
+
+    do {
+      let data = try Data(contentsOf: url)
+      return try JSONDecoder().decode(OuteTTSSpeakerProfile.self, from: data)
+    } catch {
+      return nil
+    }
+  }
+
+  // MARK: - Public API
+
+  /// Get speaker profile (from file, reference audio, or default)
+  func getSpeaker(
+    voicePath: String? = nil,
+    referenceAudio: sending MLXArray? = nil,
+    referenceText: String? = nil,
+    referenceWords: [(word: String, start: Double, end: Double)]? = nil,
+  ) async throws -> OuteTTSSpeakerProfile? {
+    // Load from file
+    if let path = voicePath {
+      return try await audioProcessor.loadSpeaker(from: path)
+    }
+
+    // Create from reference audio
+    if let audio = referenceAudio, let text = referenceText, let words = referenceWords {
+      return try await audioProcessor.createSpeakerFromTranscription(
+        audio: audio,
+        text: text,
+        words: words,
+      )
+    }
+
+    // Return default speaker
+    return defaultSpeaker
+  }
+
+  /// Generate audio from text
+  ///
+  /// Text is automatically split into sentences for processing.
+  func generate(
+    text: String,
+    speaker: OuteTTSSpeakerProfile? = nil,
+    temperature: Float? = nil,
+    topP: Float? = nil,
+    maxTokens: Int? = nil,
+  ) async throws -> TTSGenerationResult {
+    let startTime = CFAbsoluteTimeGetCurrent()
+
+    // Split text into sentences
+    let sentences = SentenceTokenizer.splitIntoSentences(text: text)
+
+    var allAudio: [Float] = []
+    for sentence in sentences {
+      let result = try await generateChunk(
+        text: sentence,
+        speaker: speaker,
+        temperature: temperature,
+        topP: topP,
+        maxTokens: maxTokens,
+      )
+      allAudio.append(contentsOf: result.audio)
+      MLXMemory.clearCache()
+    }
+
+    let processingTime = CFAbsoluteTimeGetCurrent() - startTime
+    return TTSGenerationResult(
+      audio: allAudio,
+      sampleRate: config.sampleRate,
+      processingTime: processingTime,
+    )
+  }
+
+  /// Generate audio as a stream of chunks (one per sentence)
+  func generateStreaming(
+    text: String,
+    speaker: OuteTTSSpeakerProfile? = nil,
+    temperature: Float? = nil,
+    topP: Float? = nil,
+    maxTokens: Int? = nil,
+  ) -> AsyncThrowingStream<[Float], Error> {
+    let sentences = SentenceTokenizer.splitIntoSentences(text: text)
+    let sentenceIndex = Atomic<Int>(0)
+
+    return AsyncThrowingStream {
+      let i = sentenceIndex.wrappingAdd(1, ordering: .relaxed).oldValue
+      guard i < sentences.count else { return nil }
+
+      try Task.checkCancellation()
+
+      let result = try await self.generateChunk(
+        text: sentences[i],
+        speaker: speaker,
+        temperature: temperature,
+        topP: topP,
+        maxTokens: maxTokens,
+      )
+      MLXMemory.clearCache()
+      return result.audio
+    }
+  }
+
+  /// Generate audio for a single text chunk (no splitting)
+  private func generateChunk(
+    text: String,
+    speaker: OuteTTSSpeakerProfile? = nil,
+    temperature: Float? = nil,
+    topP: Float? = nil,
+    maxTokens: Int? = nil,
+  ) async throws -> TTSGenerationResult {
+    let startTime = CFAbsoluteTimeGetCurrent()
+
+    // Use provided speaker or default
+    let speakerProfile = speaker ?? defaultSpeaker
+
+    // getCompletionPromptTokens builds token IDs directly instead of
+    // building a string and tokenizing it. This avoids 38s of BPE tokenization
+    // on the ~18,000 character prompt with thousands of special tokens.
+    let inputTokens = promptProcessor.getCompletionPromptTokens(text: text, speaker: speakerProfile)
+
+    // Generation parameters
+    let temp = temperature ?? config.temperature
+    let top = topP ?? config.topP
+    let maxToks = maxTokens ?? config.maxTokens
+    let eosToken = eosTokenId
+
+    // Initialize with input tokens
+    let inputIds = MLXArray(inputTokens.map { Int32($0) }).reshaped([1, -1])
+
+    let cache = model.newCache()
+
+    // Initial forward pass to populate cache (prefill)
+    var logits = model(inputIds, cache: cache)
+    logits = logits[0, -1].expandedDimensions(axis: 0)
+
+    eval(logits)
+
+    var generatedTokensHistory: [Int32] = []
+    generatedTokensHistory.reserveCapacity(maxToks)
+    let repetitionContextSize = config.repetitionContextSize
+
+    // Double-buffering: start async eval before generation loop
+    asyncEval(logits, cache)
+
+    // Generation loop
+    for tokenIndex in 0 ..< maxToks {
+      // Check for cancellation periodically
+      if tokenIndex % 50 == 0 {
+        try Task.checkCancellation()
+      }
+
+      // Apply temperature
+      var scaledLogits = logits / max(temp, 1e-6)
+
+      // Apply repetition penalty
+      if config.repetitionPenalty != 1.0, !generatedTokensHistory.isEmpty {
+        let history = MLXArray(generatedTokensHistory.suffix(repetitionContextSize))
+        let logits1D = scaledLogits[0]
+        let gathered = MLX.take(logits1D, history)
+        let negMask = gathered .< 0
+        let updated = MLX.where(
+          negMask,
+          gathered * config.repetitionPenalty,
+          gathered / config.repetitionPenalty,
+        )
+        logits1D[history] = updated
+        scaledLogits = logits1D.expandedDimensions(axis: 0)
+      }
+
+      // Apply top-p (nucleus) filtering
+      if top > 0.0, top < 1.0 {
+        let probs = MLX.softmax(scaledLogits[0], axis: -1)
+        let sortedIdx = MLX.argSort(MLX.negative(probs))
+        let sortedProbs = MLX.take(probs, sortedIdx)
+        let cumProbs = sortedProbs.cumsum(axis: -1)
+        let gtMask = cumProbs .> top
+        let gtMaskInt = gtMask.asType(.int32)
+        let prefix = gtMaskInt.cumsum(axis: -1)
+        let removeMaskSorted = prefix .> 1
+        let invIdx = MLX.argSort(sortedIdx)
+        let removeMask = MLX.take(removeMaskSorted, invIdx)
+        let negInf = MLXArray(-Float.infinity)
+        let filtered1D = MLX.where(removeMask, negInf, scaledLogits[0])
+        scaledLogits = filtered1D.expandedDimensions(axis: 0)
+      }
+
+      // Sample next token
+      let nextTokenArray = MLXRandom.categorical(scaledLogits, count: 1)
+
+      // Double-buffering: start forward pass BEFORE extracting token ID
+      // GPU computes next step while we do CPU operations
+      let nextInput = nextTokenArray.reshaped([1, 1])
+      logits = model(nextInput, cache: cache)
+      logits = logits.squeezed(axis: 1)
+      asyncEval(logits, cache)
+
+      // NOW extract token ID - GPU is already computing next step
+      let nextToken: Int32 = nextTokenArray[0].item()
+
+      // Check for EOS
+      if nextToken == Int32(eosToken) {
+        break
+      }
+
+      generatedTokensHistory.append(nextToken)
+    }
+
+    let generatedTokens = generatedTokensHistory.map { Int($0) }
+
+    // Extract audio codes from generated tokens
+    let audioCodes = promptProcessor.extractAudioFromTokens(generatedTokens)
+
+    guard !audioCodes[0].isEmpty, !audioCodes[1].isEmpty else {
+      throw OuteTTSEngineError.generationFailed("No audio codes found in generated tokens")
+    }
+
+    // Decode audio using DAC codec
+    let c1Array = MLXArray(audioCodes[0].map { Int32($0) })
+    let c2Array = MLXArray(audioCodes[1].map { Int32($0) })
+    let codesArray = MLX.stacked([c1Array, c2Array], axis: 0).reshaped([1, 2, -1])
+
+    let audio = audioProcessor.audioCodec.decodeFromCodes(codesArray)
+    eval(audio)
+
+    let audioFlat = audio.reshaped([-1])
+    let audioData = audioFlat.asArray(Float.self)
+
+    let processingTime = CFAbsoluteTimeGetCurrent() - startTime
+
+    return TTSGenerationResult(
+      audio: audioData,
+      sampleRate: config.sampleRate,
+      processingTime: processingTime,
+    )
+  }
+}
+
+// MARK: - Errors
+
+enum OuteTTSEngineError: Error, LocalizedError {
+  case modelNotLoaded
+  case invalidInput
+  case generationFailed(String)
+
+  var errorDescription: String? {
+    switch self {
+      case .modelNotLoaded:
+        "Model not loaded. Call load() first."
+      case .invalidInput:
+        "Invalid input text or parameters."
+      case let .generationFailed(reason):
+        "Generation failed: \(reason)"
+    }
+  }
+}

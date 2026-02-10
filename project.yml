@@ -1,0 +1,50 @@
+name: VoiceApp
+options:
+  bundleIdPrefix: com.voice
+  deploymentTarget:
+    iOS: "18.4"
+  generateEmptyDirectories: true
+
+packages:
+  mlx-audio-ios:
+    path: Packages/mlx-audio-ios
+
+targets:
+  VoiceApp:
+    type: application
+    platform: iOS
+    deploymentTarget:
+      iOS: "18.4"
+    sources:
+      - path: VoiceApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.voice.VoiceApp
+        INFOPLIST_FILE: Info.plist
+        SWIFT_VERSION: "6.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.4"
+        OTHER_SWIFT_FLAGS: "-enable-experimental-feature StrictConcurrency=minimal"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: NGX9KBXLZ6
+    dependencies:
+      - package: mlx-audio-ios
+        product: MLXAudio
+      - sdk: Metal.framework
+      - sdk: MetalPerformanceShadersGraph.framework
+      - sdk: MetalPerformanceShaders.framework
+      - sdk: Accelerate.framework
+      - sdk: AVFoundation.framework
+    info:
+      path: Info.plist
+      properties:
+        NSMicrophoneUsageDescription: "Voice needs access to your microphone to record voice samples for voice cloning."
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight

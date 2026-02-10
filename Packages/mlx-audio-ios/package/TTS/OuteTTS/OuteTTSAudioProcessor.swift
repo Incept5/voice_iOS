@@ -1,0 +1,481 @@
+// Copyright © OuteAI (original model implementation)
+// Copyright © Anthony DePasquale (MLX port)
+// Ported to MLX from https://github.com/edwko/OuteTTS
+// License: licenses/outetts.txt
+
+//  Audio processing and feature extraction for OuteTTS speaker profiles
+
+import Accelerate
+import Foundation
+import MLX
+
+// MARK: - Audio Feature Extraction
+
+/// Calculates pitch using autocorrelation method
+func calculatePitch(
+  audioArray: MLXArray,
+  sampleRate: Int,
+  minFreq: Float = 75.0,
+  maxFreq: Float = 600.0,
+  frameLength: Int = 400,
+  hopLength: Int = 160,
+  threshold: Float = 0.3,
+) -> [Float] {
+  // Convert to numpy-like array
+  var audioData = audioArray.asArray(Float.self)
+
+  // Convert to mono if needed
+  let numSamples = audioData.count
+
+  // Pad audio
+  let padLen = (frameLength - (numSamples % hopLength)) % hopLength
+  audioData.append(contentsOf: [Float](repeating: 0, count: padLen))
+
+  let numFrames = (audioData.count - frameLength) / hopLength + 1
+
+  // Create frames
+  var frames = [[Float]](repeating: [Float](repeating: 0, count: frameLength), count: numFrames)
+  for i in 0 ..< numFrames {
+    let start = i * hopLength
+    frames[i] = Array(audioData[start ..< (start + frameLength)])
+  }
+
+  // Apply Hanning window
+  var window = [Float](repeating: 0, count: frameLength)
+  vDSP_hann_window(&window, vDSP_Length(frameLength), Int32(vDSP_HANN_NORM))
+
+  for i in 0 ..< numFrames {
+    vDSP_vmul(frames[i], 1, window, 1, &frames[i], 1, vDSP_Length(frameLength))
+  }
+
+  // Compute autocorrelation using FFT
+  let fftLength = frameLength * 2
+  let log2n = vDSP_Length(log2(Float(fftLength)))
+  guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
+    return [Float](repeating: 0, count: numFrames)
+  }
+  defer { vDSP_destroy_fftsetup(fftSetup) }
+
+  var pitches = [Float](repeating: 0, count: numFrames)
+
+  for i in 0 ..< numFrames {
+    // Zero-pad frame for FFT
+    var paddedFrame = frames[i] + [Float](repeating: 0, count: frameLength)
+
+    // Split into real and imaginary
+    var realPart = [Float](repeating: 0, count: fftLength / 2)
+    var imagPart = [Float](repeating: 0, count: fftLength / 2)
+
+    // Perform FFT operations with proper pointer scoping
+    realPart.withUnsafeMutableBufferPointer { realPtr in
+      imagPart.withUnsafeMutableBufferPointer { imagPtr in
+        var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
+
+        // Convert to split complex
+        paddedFrame.withUnsafeMutableBufferPointer { paddedPtr in
+          paddedPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftLength / 2) { complexPtr in
+            vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftLength / 2))
+          }
+        }
+
+        // Forward FFT
+        vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
+
+        // Inverse FFT for autocorrelation
+        vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_INVERSE))
+      }
+    }
+
+    // Get autocorrelation values
+    var autocorr = [Float](repeating: 0, count: frameLength)
+    for j in 0 ..< frameLength {
+      if j < fftLength / 2 {
+        autocorr[j] = realPart[j]
+      }
+    }
+
+    // Find peak in valid frequency range using vDSP
+    let minIdx = max(1, Int(Float(sampleRate) / maxFreq))
+    let maxIdx = min(frameLength, Int(Float(sampleRate) / minFreq))
+
+    if minIdx < maxIdx {
+      // Use vDSP_maxvi for vectorized peak finding (with pointer arithmetic to avoid copy)
+      var peakVal: Float = 0
+      var peakIdxUInt: vDSP_Length = 0
+      let searchLength = vDSP_Length(maxIdx - minIdx)
+      autocorr.withUnsafeBufferPointer { ptr in
+        vDSP_maxvi(
+          ptr.baseAddress! + minIdx, 1,
+          &peakVal, &peakIdxUInt,
+          searchLength,
+        )
+      }
+      let peakIdx = minIdx + Int(peakIdxUInt)
+
+      // Check voicing threshold
+      let autocorr0 = autocorr[0] + 1e-8
+      if peakVal / autocorr0 > threshold, peakIdx > 0 {
+        // Parabolic interpolation for sub-sample accuracy
+        var delta: Float = 0.0
+        if peakIdx > 0, peakIdx < frameLength - 1 {
+          let alpha = autocorr[peakIdx - 1]
+          let beta = autocorr[peakIdx]
+          let gamma = autocorr[peakIdx + 1]
+          delta = 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma + 1e-8)
+        }
+
+        let bestPeriod = (Float(peakIdx) + delta) / Float(sampleRate)
+        let pitch = bestPeriod > 0 ? 1.0 / bestPeriod : 0.0
+        pitches[i] = min(max(pitch, minFreq), maxFreq)
+      }
+    }
+  }
+
+  return pitches
+}
+
+/// Extract single normalized pitch value from audio
+func extractSinglePitchValue(
+  audioArray: MLXArray,
+  sampleRate: Int,
+  minFreq: Float = 75.0,
+  maxFreq: Float = 600.0,
+) -> Float {
+  let pitches = calculatePitch(
+    audioArray: audioArray,
+    sampleRate: sampleRate,
+    minFreq: minFreq,
+    maxFreq: maxFreq,
+  )
+
+  // Clip all values to [minFreq, maxFreq] range
+  // This ensures unvoiced frames (0) become minFreq
+  let clippedPitches = pitches.map { max(min($0, maxFreq), minFreq) }
+
+  // Calculate average pitch (includes all frames)
+  let averagePitch = clippedPitches.isEmpty ? 0 : clippedPitches.reduce(0, +) / Float(clippedPitches.count)
+
+  // Normalize to 0-1 range
+  let normalized = (averagePitch - minFreq) / (maxFreq - minFreq)
+  return min(max(normalized, 0.0), 1.0)
+}
+
+// MARK: - Feature Extractor
+
+/// Extracts audio features (energy, spectral centroid, pitch)
+class OuteTTSFeatures {
+  private let eps: Float = 1e-10
+
+  init() {}
+
+  /// Scale value from 0-1 to 0-100
+  func scaleValue(_ value: Float) -> Int {
+    Int(round(value * 100))
+  }
+
+  /// Validate audio array
+  func validateAudio(_ audio: MLXArray) -> Bool {
+    if audio.size == 0 {
+      return false
+    }
+    let data = audio.asArray(Float.self)
+    return !data.contains(where: { $0.isNaN || $0.isInfinite })
+  }
+
+  /// Get default features when audio is invalid
+  func getDefaultFeatures() -> OuteTTSAudioFeatures {
+    OuteTTSAudioFeatures(energy: 0, spectralCentroid: 0, pitch: 0)
+  }
+
+  /// Extract audio features from a segment
+  func extractAudioFeatures(audio: MLXArray, sampleRate: Int) -> OuteTTSAudioFeatures {
+    guard validateAudio(audio) else {
+      return getDefaultFeatures()
+    }
+
+    let audioData = audio.asArray(Float.self)
+
+    // RMS Energy (normalized to 0-1)
+    var squaredSum: Float = 0
+    vDSP_svesq(audioData, 1, &squaredSum, vDSP_Length(audioData.count))
+    let rmsEnergy = sqrt(squaredSum / Float(audioData.count))
+    let normalizedEnergy = min(rmsEnergy, 1.0)
+
+    // Spectral Centroid (normalized to 0-1)
+    let spectralCentroid = computeSpectralCentroid(audioData, sampleRate: sampleRate)
+    let normalizedCentroid = spectralCentroid / Float(sampleRate / 2)
+
+    // Pitch (already normalized in extractSinglePitchValue)
+    let pitch = extractSinglePitchValue(audioArray: audio, sampleRate: sampleRate)
+
+    return OuteTTSAudioFeatures(
+      energy: scaleValue(normalizedEnergy),
+      spectralCentroid: scaleValue(min(normalizedCentroid, 1.0)),
+      pitch: scaleValue(pitch),
+    )
+  }
+
+  /// Compute spectral centroid using FFT
+  private func computeSpectralCentroid(_ audio: [Float], sampleRate: Int) -> Float {
+    let n = audio.count
+    guard n > 0 else { return 0 }
+
+    // Find next power of 2
+    let fftSize = Int(pow(2, ceil(log2(Double(n)))))
+    let log2n = vDSP_Length(log2(Float(fftSize)))
+
+    guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
+      return 0
+    }
+    defer { vDSP_destroy_fftsetup(fftSetup) }
+
+    // Zero-pad audio
+    var paddedAudio = audio + [Float](repeating: 0, count: fftSize - n)
+
+    // Prepare split complex
+    var realPart = [Float](repeating: 0, count: fftSize / 2)
+    var imagPart = [Float](repeating: 0, count: fftSize / 2)
+    var magnitudes = [Float](repeating: 0, count: fftSize / 2)
+
+    // Perform FFT operations with proper pointer scoping
+    realPart.withUnsafeMutableBufferPointer { realPtr in
+      imagPart.withUnsafeMutableBufferPointer { imagPtr in
+        var splitComplex = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
+
+        paddedAudio.withUnsafeMutableBufferPointer { paddedPtr in
+          paddedPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
+            vDSP_ctoz(complexPtr, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
+          }
+        }
+
+        // FFT
+        vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
+
+        // Compute magnitude spectrum
+        vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
+      }
+    }
+
+    // Square root of magnitudes
+    var count = Int32(fftSize / 2)
+    vvsqrtf(&magnitudes, magnitudes, &count)
+
+    // Compute frequencies using vDSP ramp generation
+    var frequencies = [Float](repeating: 0, count: fftSize / 2)
+    var start: Float = 0
+    var step = Float(sampleRate) / Float(fftSize)
+    vDSP_vramp(&start, &step, &frequencies, 1, vDSP_Length(fftSize / 2))
+
+    // Compute weighted sum
+    var weightedSum: Float = 0
+    vDSP_dotpr(frequencies, 1, magnitudes, 1, &weightedSum, vDSP_Length(fftSize / 2))
+
+    var magnitudeSum: Float = 0
+    vDSP_sve(magnitudes, 1, &magnitudeSum, vDSP_Length(fftSize / 2))
+
+    return magnitudeSum > eps ? weightedSum / magnitudeSum : 0
+  }
+}
+
+// MARK: - Audio Preprocessing
+
+/// Preprocess audio for speaker profile creation
+/// - Parameters:
+///   - audio: Input audio array (1D)
+///   - sampleRate: Sample rate
+///   - targetLoudness: Target loudness in dB (default -18.0, similar to LUFS)
+///   - peakLimit: Peak limit in dB (default -1.0)
+/// - Returns: Preprocessed audio as MLXArray with shape [1, 1, samples]
+func preprocessAudioForSpeaker(
+  _ audio: MLXArray,
+  sampleRate: Int,
+  targetLoudness: Float = -18.0,
+  peakLimit: Float = -1.0,
+) -> MLXArray {
+  var audioData = audio.asArray(Float.self)
+
+  // Ensure minimum length (400ms block size for loudness measurement)
+  let minSamples = Int(0.4 * Float(sampleRate))
+  let originalLength = audioData.count
+
+  if originalLength < minSamples {
+    audioData.append(contentsOf: [Float](repeating: 0, count: minSamples - originalLength))
+  }
+
+  // Measure current RMS loudness (approximation of integrated loudness)
+  var squaredSum: Float = 0
+  vDSP_svesq(audioData, 1, &squaredSum, vDSP_Length(audioData.count))
+  let rmsDb = 20 * log10(sqrt(squaredSum / Float(audioData.count)) + 1e-10)
+
+  // Calculate gain needed to reach target loudness
+  let gainDb = targetLoudness - rmsDb
+  let gain = pow(10.0, gainDb / 20.0)
+
+  // Apply gain
+  var gainedAudio = [Float](repeating: 0, count: audioData.count)
+  var gainValue = gain
+  vDSP_vsmul(audioData, 1, &gainValue, &gainedAudio, 1, vDSP_Length(audioData.count))
+
+  // Apply peak limiting if necessary
+  var maxVal: Float = 0
+  vDSP_maxmgv(gainedAudio, 1, &maxVal, vDSP_Length(gainedAudio.count))
+  let peakThreshold = pow(10.0, peakLimit / 20.0)
+
+  if maxVal > peakThreshold {
+    let peakGain = peakThreshold / maxVal
+    var peakGainValue = peakGain
+    vDSP_vsmul(gainedAudio, 1, &peakGainValue, &gainedAudio, 1, vDSP_Length(gainedAudio.count))
+  }
+
+  // Trim back to original length if we padded
+  if originalLength < minSamples {
+    gainedAudio = Array(gainedAudio.prefix(originalLength))
+  }
+
+  return MLXArray(gainedAudio)
+}
+
+// MARK: - Audio Processor
+
+/// Audio processor for OuteTTS. Immutable after creation via `create()` factory method.
+final class OuteTTSAudioProcessor {
+  let features: OuteTTSFeatures
+  let audioCodec: DACCodec
+  let sampleRate: Int
+
+  private init(audioCodec: DACCodec, sampleRate: Int) {
+    features = OuteTTSFeatures()
+    self.audioCodec = audioCodec
+    self.sampleRate = sampleRate
+  }
+
+  /// Create a fully initialized audio processor with the DAC codec loaded.
+  static func create(
+    sampleRate: Int = 24000,
+    repoId: String = DACCodec.defaultRepoId,
+    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+  ) async throws -> OuteTTSAudioProcessor {
+    let codec = try await DACCodec.fromPretrained(repoId: repoId, progressHandler: progressHandler)
+    return OuteTTSAudioProcessor(audioCodec: codec, sampleRate: sampleRate)
+  }
+
+  /// Create speaker profile from transcribed audio data
+  func createSpeakerFromTranscription(
+    audio: MLXArray,
+    text: String,
+    words: [(word: String, start: Double, end: Double)],
+  ) async throws -> OuteTTSSpeakerProfile {
+    // Preprocess audio (loudness normalization + peak limiting)
+    let processedAudio = preprocessAudioForSpeaker(audio, sampleRate: sampleRate)
+
+    // Encode preprocessed audio to get codes
+    let (_, codes) = audioCodec.encode(processedAudio.reshaped([1, 1, -1]))
+    let codesArray = codes.asArray(Int32.self)
+
+    // Parse codes into c1 and c2
+    let numCodebooks = codes.shape[1]
+    let timeSteps = codes.shape[2]
+
+    var c1: [Int] = []
+    var c2: [Int] = []
+
+    for t in 0 ..< timeSteps {
+      if numCodebooks > 0 {
+        c1.append(Int(codesArray[t]))
+      }
+      if numCodebooks > 1 {
+        c2.append(Int(codesArray[timeSteps + t]))
+      }
+    }
+
+    // Extract global features from preprocessed audio
+    let globalFeatures = features.extractAudioFeatures(audio: processedAudio, sampleRate: sampleRate)
+
+    // Tokens per second (approximately 75 for DAC at 24kHz)
+    let tps = 75.0
+    let maxExtension = 20
+
+    var wordCodes: [OuteTTSWordData] = []
+    var start: Int? = nil
+
+    let audioData = processedAudio.asArray(Float.self)
+
+    for (idx, wordInfo) in words.enumerated() {
+      // Match Python behavior: process ALL words, never skip
+      // Even zero-duration words are included to maintain alignment between speaker.text and speaker.words
+      let word = wordInfo.word.trimmingCharacters(in: .whitespaces)
+
+      if start == nil {
+        start = max(0, Int(wordInfo.start * tps) - maxExtension)
+      }
+
+      let rawEnd: Int = if idx == words.count - 1 {
+        min(c1.count, Int(wordInfo.end * tps) + maxExtension)
+      } else {
+        Int(wordInfo.end * tps)
+      }
+
+      // Ensure end >= start (may be equal for zero-duration words, resulting in empty c1/c2)
+      let end = max(start!, rawEnd)
+
+      let wordC1 = Array(c1[start! ..< min(end, c1.count)])
+      let wordC2 = Array(c2[start! ..< min(end, c2.count)])
+
+      // Extract word audio segment
+      let audioStart = Int(wordInfo.start * Double(sampleRate))
+      let audioEnd = Int(wordInfo.end * Double(sampleRate))
+      let wordAudio: [Float] = if audioStart < audioEnd, audioEnd <= audioData.count {
+        Array(audioData[audioStart ..< audioEnd])
+      } else {
+        []
+      }
+
+      let wordFeatures = wordAudio.isEmpty
+        ? features.getDefaultFeatures()
+        : features.extractAudioFeatures(audio: MLXArray(wordAudio), sampleRate: sampleRate)
+
+      start = end
+
+      wordCodes.append(OuteTTSWordData(
+        word: word,
+        duration: round(Double(wordC1.count) / tps * 100) / 100,
+        c1: wordC1,
+        c2: wordC2,
+        features: wordFeatures,
+      ))
+    }
+
+    return OuteTTSSpeakerProfile(
+      text: OuteTTSPromptProcessor.normalizeText(text),
+      words: wordCodes,
+      globalFeatures: globalFeatures,
+    )
+  }
+
+  /// Save speaker profile to file
+  func saveSpeaker(_ speaker: OuteTTSSpeakerProfile, to path: String) async throws {
+    try await speaker.save(to: path)
+    Log.tts.info("Speaker saved to: \(path)")
+  }
+
+  /// Load speaker profile from file
+  func loadSpeaker(from path: String) async throws -> OuteTTSSpeakerProfile {
+    try await OuteTTSSpeakerProfile.load(from: path)
+  }
+}
+
+// MARK: - Errors
+
+enum OuteTTSError: Error, LocalizedError {
+  case invalidAudio
+  case speakerFileNotFound(String)
+
+  var errorDescription: String? {
+    switch self {
+      case .invalidAudio:
+        "Invalid or empty audio data"
+      case let .speakerFileNotFound(path):
+        "Speaker file not found: \(path)"
+    }
+  }
+}
