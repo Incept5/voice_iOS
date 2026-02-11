@@ -9,17 +9,16 @@ struct VoiceSetupView: View {
     @State private var recordedURL: URL?
 
     var body: some View {
-        NavigationStack {
             List {
                 // MARK: - Model Section
                 Section {
                     if manager.isModelLoaded {
                         Label("Model Ready", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
-                    } else if manager.isDownloading {
+                    } else if manager.isLoading {
                         HStack {
-                            ProgressView(value: manager.downloadProgress)
-                            Text("\(Int(manager.downloadProgress * 100))%")
+                            ProgressView(value: manager.loadingProgress)
+                            Text("\(Int(manager.loadingProgress * 100))%")
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
                         }
@@ -27,10 +26,7 @@ struct VoiceSetupView: View {
                         Button {
                             Task { try? await manager.loadModel() }
                         } label: {
-                            Label(
-                                manager.isModelCached ? "Load Model" : "Download Model",
-                                systemImage: "arrow.down.circle"
-                            )
+                            Label("Load Model", systemImage: "arrow.down.circle")
                         }
                     }
                 } header: {
@@ -69,7 +65,7 @@ struct VoiceSetupView: View {
                             Label("Stop Recording", systemImage: "stop.circle.fill")
                                 .frame(maxWidth: .infinity)
                         }
-                    } else if let url = recordedURL {
+                    } else if recordedURL != nil {
                         HStack {
                             Label("Recording Ready", systemImage: "waveform")
                             Spacer()
@@ -159,7 +155,6 @@ struct VoiceSetupView: View {
             } message: {
                 Text("Enter a name for this voice profile.")
             }
-        }
     }
 
     private func stopRecording() {

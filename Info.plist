@@ -18,8 +18,12 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Voice reads your calendar to brief you on today's schedule.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Voice needs access to your microphone to record voice samples for voice cloning.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Voice reads your reminders to include them in your daily brief.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

@@ -14,7 +14,7 @@ struct SphereView: View {
             let size = min(geometry.size.width, geometry.size.height)
 
             if size > 1 {
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+                TimelineView(.animation(minimumInterval: isActive ? 1.0 / 60.0 : 1.0 / 30.0)) { timeline in
                     Canvas { context, canvasSize in
                         guard canvasSize.width > 0, canvasSize.height > 0 else { return }
 
@@ -27,6 +27,8 @@ struct SphereView: View {
                         let speakingRadius = baseRadius * (1.0 + sphere.audioIntensity * 0.15)
                         let idleRadius = baseRadius * (0.75 + sphere.breathingPhase * 0.25)
                         let sphereRadius = speakingRadius * (1 - sphere.transitionProgress) + idleRadius * sphere.transitionProgress
+
+                        guard sphereRadius > 0 && sphereRadius.isFinite else { return }
 
                         let baseColor = Color(hex: primaryColorHex)
 
@@ -60,13 +62,16 @@ struct SphereView: View {
     }
 
     private func drawParticles(context: inout GraphicsContext, center: CGPoint, radius: CGFloat, baseColor: Color) {
-        let sorted = sphere.particles.sorted { $0.z < $1.z }
-
         let speakingBrightness = 1.0 + sphere.audioIntensity * 0.6
         let idleBrightness = 0.4 + sphere.breathingPhase * 0.3
         let brightnessBoost = speakingBrightness * (1 - sphere.transitionProgress) + idleBrightness * sphere.transitionProgress
 
-        for particle in sorted {
+        for idx in sphere.sortedIndices {
+            let particle = sphere.particles[idx]
+
+            // Cull back-facing particles
+            guard particle.z > -0.7 else { continue }
+
             let perspective = 1.0 / (1.0 - particle.z * 0.3)
             let screenX = center.x + particle.x * radius * perspective
             let screenY = center.y + particle.y * radius * perspective
@@ -112,6 +117,7 @@ final class LivingSphere {
     }
 
     var particles: [Particle] = []
+    var sortedIndices: [Int] = []
     var audioIntensity: CGFloat = 0
     var breathingPhase: CGFloat = 0.5
     var transitionProgress: CGFloat = 0
@@ -172,6 +178,8 @@ final class LivingSphere {
             p.brightness = p.baseBrightness
             return p
         }
+
+        sortedIndices = Array(0..<count)
     }
 
     private func initializePositions() {
@@ -242,6 +250,9 @@ final class LivingSphere {
 
             particles[i] = p
         }
+
+        // In-place sort of index buffer (no allocation per frame)
+        sortedIndices.sort { particles[$0].z < particles[$1].z }
     }
 }
 

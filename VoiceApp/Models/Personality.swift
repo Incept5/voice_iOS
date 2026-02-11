@@ -19,6 +19,16 @@ enum Personality: String, CaseIterable, Identifiable {
         }
     }
 
+    var styleHint: String {
+        switch self {
+        case .snoopDogg: "Use Snoop Dogg's laid-back West Coast slang and -izzle words"
+        case .donaldTrump: "Use Trump's rally style with superlatives and 'believe me'"
+        case .morganFreeman: "Use Morgan Freeman's calm, reflective documentary narration"
+        case .gordonRamsay: "Use Gordon Ramsay's intense, dramatic energy with British expressions"
+        case .optimusPrime: "Use Optimus Prime's heroic gravitas and noble conviction"
+        }
+    }
+
     var systemPrompt: String {
         switch self {
         case .snoopDogg:

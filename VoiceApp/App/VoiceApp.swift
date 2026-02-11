@@ -6,12 +6,12 @@ import MLXAudio
 struct VoiceApp: App {
     init() {
         configureAudioSession()
-        MLXMemory.configure(cacheLimit: 256 * 1024 * 1024)
+        MLXMemory.configure(cacheLimit: 512 * 1024 * 1024)
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            HomeView()
         }
     }
 

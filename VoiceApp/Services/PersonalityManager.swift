@@ -2,6 +2,7 @@ import Foundation
 import MLXAudio
 import MLXLLM
 import MLXLMCommon
+import UIKit
 
 @MainActor
 @Observable
@@ -14,8 +15,8 @@ final class PersonalityManager {
     var generatedText = ""
     var isGenerating = false
     var isModelLoaded = false
-    var isDownloading = false
-    var downloadProgress: Double = 0
+    var isLoading = false
+    var loadingProgress: Double = 0
     var error: String?
 
     // MARK: - Private
@@ -23,7 +24,7 @@ final class PersonalityManager {
     private var container: ModelContainer?
     private var session: ChatSession?
 
-    private let modelID = "mlx-community/Qwen3-0.6B-4bit"
+    private let modelID = "Qwen/Qwen3-1.7B-MLX-4bit"
 
     private let generateParameters = GenerateParameters(
         maxTokens: 300,
@@ -32,13 +33,30 @@ final class PersonalityManager {
         repetitionPenalty: 1.1
     )
 
+    init() {
+        registerForMemoryWarning()
+    }
+
+    private func registerForMemoryWarning() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.isGenerating else { return }
+                print("[PersonalityManager] Memory warning — unloading idle LLM")
+                self.unloadModel()
+            }
+        }
+    }
+
     // MARK: - Model Loading
 
     func loadModelIfNeeded() async {
-        guard container == nil, !isDownloading else { return }
+        guard container == nil, !isLoading else { return }
 
-        isDownloading = true
-        downloadProgress = 0
+        isLoading = true
+        loadingProgress = 0
         error = nil
 
         do {
@@ -47,17 +65,17 @@ final class PersonalityManager {
                 configuration: configuration
             ) { [weak self] progress in
                 Task { @MainActor [weak self] in
-                    self?.downloadProgress = progress.fractionCompleted
+                    self?.loadingProgress = progress.fractionCompleted
                 }
             }
 
             container = loaded
             isModelLoaded = true
-            isDownloading = false
+            isLoading = false
             rebuildSession()
             print("[PersonalityManager] Model loaded: \(modelID)")
         } catch {
-            isDownloading = false
+            isLoading = false
             self.error = "Failed to load LLM: \(error.localizedDescription)"
             print("[PersonalityManager] Load error: \(error)")
         }
@@ -127,21 +145,94 @@ final class PersonalityManager {
         MLXMemory.clearCache()
     }
 
+    func generate(userPrompt: String, systemPrompt: String, maxTokens: Int = 300) async {
+        guard !userPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            print("[PersonalityManager] Skipping: empty userPrompt")
+            return
+        }
+
+        print("[PersonalityManager] generate(userPrompt: \"\(userPrompt.prefix(80))\", maxTokens: \(maxTokens))")
+
+        if container == nil {
+            await loadModelIfNeeded()
+        }
+        guard let container else {
+            error = "Model not ready"
+            print("[PersonalityManager] Aborting: container nil after loadModelIfNeeded")
+            return
+        }
+
+        // Build mode-specific parameters
+        var params = generateParameters
+        params.maxTokens = maxTokens
+
+        // Replace session with the custom system prompt (one session at a time)
+        session = ChatSession(
+            container,
+            instructions: systemPrompt,
+            generateParameters: params
+        )
+
+        guard let session else {
+            print("[PersonalityManager] Aborting: session nil after ChatSession init")
+            return
+        }
+
+        isGenerating = true
+        generatedText = ""
+        error = nil
+
+        do {
+            let stream = session.streamResponse(to: userPrompt)
+            var fullResponse = ""
+
+            for try await token in stream {
+                fullResponse += token
+                generatedText = stripThinkBlock(from: fullResponse)
+            }
+
+            print("[PersonalityManager] Raw response (\(fullResponse.count) chars): \"\(fullResponse.prefix(200))\"")
+            generatedText = stripThinkBlock(from: fullResponse)
+            print("[PersonalityManager] After strip (\(generatedText.count) chars): \"\(generatedText.prefix(200))\"")
+        } catch {
+            self.error = "Generation failed: \(error.localizedDescription)"
+            print("[PersonalityManager] Generate error: \(error)")
+        }
+
+        isGenerating = false
+
+        // Restore default personality session
+        rebuildSession()
+        MLXMemory.clearCache()
+    }
+
     // MARK: - Helpers
 
+    /// Strip `<think>…</think>` blocks from model output.
+    /// Only returns actual response content (after `</think>`), never the thinking itself.
     private func stripThinkBlock(from text: String) -> String {
         // Take everything after </think> if present
         if let range = text.range(of: "</think>") {
-            return String(text[range.upperBound...])
+            let after = String(text[range.upperBound...])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !after.isEmpty { return after }
+            // Closed think block but nothing after — use think content as fallback
+            if let openRange = text.range(of: "<think>") {
+                let thought = String(text[openRange.upperBound..<range.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !thought.isEmpty { return thought }
+            }
         }
 
-        // Still thinking (opened but not closed) — show nothing yet
-        if text.contains("<think>") {
-            return ""
+        // Think block opened but never closed — ran out of tokens mid-thought
+        // Use the think content as fallback
+        if let openRange = text.range(of: "<think>") {
+            let thought = String(text[openRange.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !thought.isEmpty { return thought }
         }
 
-        // No think block at all
+        // No think block at all — return as-is
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

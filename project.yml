@@ -1,6 +1,6 @@
 name: VoiceApp
 options:
-  bundleIdPrefix: com.voice
+  bundleIdPrefix: com.incept5
   deploymentTarget:
     iOS: "18.4"
   generateEmptyDirectories: true
@@ -12,6 +12,15 @@ packages:
     url: https://github.com/ml-explore/mlx-swift-lm
     branch: main
 
+schemes:
+  VoiceApp:
+    build:
+      targets:
+        VoiceApp: all
+        ScreenTimeReport: [build]
+    run:
+      config: Debug
+
 targets:
   VoiceApp:
     type: application
@@ -22,12 +31,13 @@ targets:
       - path: VoiceApp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.voice.VoiceApp
+        PRODUCT_BUNDLE_IDENTIFIER: com.incept5.VoiceApp
         INFOPLIST_FILE: Info.plist
         SWIFT_VERSION: "6.0"
         IPHONEOS_DEPLOYMENT_TARGET: "18.4"
         OTHER_SWIFT_FLAGS: "-enable-experimental-feature StrictConcurrency=minimal"
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: VoiceApp.entitlements
         DEVELOPMENT_TEAM: NGX9KBXLZ6
     dependencies:
       - package: mlx-audio-ios
@@ -41,10 +51,14 @@ targets:
       - sdk: MetalPerformanceShaders.framework
       - sdk: Accelerate.framework
       - sdk: AVFoundation.framework
+      - sdk: EventKit.framework
+      - target: ScreenTimeReport
     info:
       path: Info.plist
       properties:
         NSMicrophoneUsageDescription: "Voice needs access to your microphone to record voice samples for voice cloning."
+        NSCalendarsFullAccessUsageDescription: "Voice reads your calendar to brief you on today's schedule."
+        NSRemindersFullAccessUsageDescription: "Voice reads your reminders to include them in your daily brief."
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -55,3 +69,26 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  ScreenTimeReport:
+    type: app-extension
+    platform: iOS
+    deploymentTarget:
+      iOS: "18.4"
+    sources:
+      - path: ScreenTimeReport
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.incept5.VoiceApp.ScreenTimeReport
+        SWIFT_VERSION: "6.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.4"
+        OTHER_SWIFT_FLAGS: "-enable-experimental-feature StrictConcurrency=minimal"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: ScreenTimeReport/ScreenTimeReport.entitlements
+        DEVELOPMENT_TEAM: NGX9KBXLZ6
+    info:
+      path: ScreenTimeReport/Info.plist
+      properties:
+        CFBundleDisplayName: ScreenTimeReport
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.deviceactivityui.report-extension

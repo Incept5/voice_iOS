@@ -423,7 +423,9 @@ public final class ChatterboxTurboEngine: TTSEngine {
 
       let startTime = Date()
       return AsyncThrowingStream { continuation in
-        Task {
+        // Use Task.detached so the heavy model.generate() computation runs
+        // on the cooperative thread pool instead of blocking @MainActor.
+        let generationTask = Task.detached {
           do {
             for try await samples in modelStream {
               guard !Task.isCancelled else { break }
@@ -440,6 +442,9 @@ public final class ChatterboxTurboEngine: TTSEngine {
           } catch {
             continuation.finish(throwing: error)
           }
+        }
+        continuation.onTermination = { _ in
+          generationTask.cancel()
         }
       }
     }

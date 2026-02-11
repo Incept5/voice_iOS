@@ -1,13 +1,14 @@
 import AVFoundation
 import Foundation
 import MLXAudio
+import UIKit
 
 // MARK: - Voice Profile
 
 struct VoiceProfile: Codable, Sendable, Identifiable {
     let id: UUID
     let name: String
-    let audioFilePath: String
+    let audioFilePath: String // Stores filename only; legacy data may contain full paths
     let sampleRate: Int
     let duration: TimeInterval
     let createdAt: Date
@@ -22,6 +23,16 @@ struct VoiceProfile: Codable, Sendable, Identifiable {
     }
 }
 
+// MARK: - Sendable Wrapper
+
+/// Wraps a non-Sendable value for use across isolation boundaries.
+/// Used to pass @MainActor-isolated values (engine, player, format) into Task.detached
+/// where we know the operations are thread-safe (AVAudioPlayerNode.scheduleBuffer/play).
+struct UncheckedSendableBox<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
 // MARK: - Voice Cloning Manager
 
 /// On-device TTS with voice cloning using Chatterbox-Turbo 4-bit via MLXAudio
@@ -31,13 +42,12 @@ final class VoiceCloningManager {
     // MARK: - State
 
     var isSpeaking = false
-    var currentSentence = ""
     var error: String?
     var audioLevel: Float = 0
 
     // Model state
-    var isDownloading = false
-    var downloadProgress: Double = 0
+    var isLoading = false
+    var loadingProgress: Double = 0
     var isModelLoaded = false
 
     // Voice profiles
@@ -49,102 +59,93 @@ final class VoiceCloningManager {
     private var engine: ChatterboxTurboEngine?
     private var preparedVoices: [String: ChatterboxTurboReferenceAudio] = [:]
 
-    private var audioEngine: AVAudioEngine?
-    private var playerNode: AVAudioPlayerNode?
-    private var audioFormat: AVAudioFormat?
-    private var isPlaying = false
+    private var audioPlayer: AVAudioPlayer?
+    private var meteringTask: Task<Void, Never>?
 
     private var currentTask: Task<Void, Never>?
-    private var meteringTask: Task<Void, Never>?
-    nonisolated(unsafe) private var isCancelled = false
+    private var speakGeneration = 0
 
     private let sampleRate = 24000
-    private let profilesKey = "voiceProfiles_v1"
-    private var _isModelCached = false
+    private let profilesDirectory: URL
+    private let profilesFileURL: URL
 
-    var quantization: ChatterboxTurboQuantization = .q4
-
-    var isModelCached: Bool { _isModelCached }
-
-    var needsDownload: Bool {
-        !isModelLoaded && !_isModelCached && engine == nil
+    var isModelCached: Bool {
+        UserDefaults.standard.bool(forKey: "voiceModelDownloaded")
     }
 
     // MARK: - Init
 
     init() {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        profilesDirectory = docs.appendingPathComponent("voice_profiles")
+        profilesFileURL = docs.appendingPathComponent("voice_profiles.json")
+        try? FileManager.default.createDirectory(at: profilesDirectory, withIntermediateDirectories: true)
+
         loadSavedProfiles()
         currentVoiceProfileName = UserDefaults.standard.string(forKey: "activeVoiceProfile")
-        // Validate persisted profile still exists, auto-select first if not
         if currentVoiceProfileName == nil
-            || !availableProfiles.contains(where: { $0.name == currentVoiceProfileName }) {
+            || !availableProfiles.contains(where: { $0.name == currentVoiceProfileName })
+        {
             currentVoiceProfileName = availableProfiles.first?.name
         }
-        if let saved = UserDefaults.standard.string(forKey: "ttsQuantization"),
-           let q = ChatterboxTurboQuantization(rawValue: saved) {
-            quantization = q
-        }
-        if UserDefaults.standard.bool(forKey: "voiceModelDownloaded") {
-            _isModelCached = true
-        }
+
+        registerForMemoryWarning()
         print("[VoiceCloning] Active voice profile: \(currentVoiceProfileName ?? "none")")
     }
 
-    // MARK: - Profiles Directory
-
-    private var voiceProfilesDirectory: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dir = docs.appendingPathComponent("voice_profiles")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+    private func registerForMemoryWarning() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.isSpeaking else { return }
+                print("[VoiceCloning] Memory warning — unloading idle TTS model")
+                self.unloadModel()
+            }
+        }
     }
 
-    private var profilesFileURL: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return docs.appendingPathComponent("voice_profiles.json")
+    // MARK: - Audio URL Resolution
+
+    /// Resolves the audio file URL for a profile. Handles both filename-only (new)
+    /// and legacy absolute paths by always extracting just the filename.
+    private func audioURL(for profile: VoiceProfile) -> URL {
+        let filename = URL(fileURLWithPath: profile.audioFilePath).lastPathComponent
+        return profilesDirectory.appendingPathComponent(filename)
     }
 
     // MARK: - Model Management
 
     func loadModel() async throws {
-        guard !isModelLoaded && !isDownloading else { return }
+        guard !isModelLoaded && !isLoading else { return }
 
-        isDownloading = true
-        downloadProgress = 0
+        isLoading = true
+        loadingProgress = 0
         error = nil
 
         print("[VoiceCloning] Loading model...")
 
         do {
-            engine = ChatterboxTurboEngine(quantization: quantization)
+            engine = ChatterboxTurboEngine(quantization: .q4)
 
             try await engine?.load { [weak self] progress in
                 Task { @MainActor [weak self] in
-                    self?.downloadProgress = progress.fractionCompleted
+                    self?.loadingProgress = progress.fractionCompleted
                 }
             }
 
-            isDownloading = false
+            isLoading = false
             isModelLoaded = true
-            _isModelCached = true
-
             UserDefaults.standard.set(true, forKey: "voiceModelDownloaded")
             print("[VoiceCloning] Model ready")
 
             await prepareAllReferenceAudio()
-            await warmup()
         } catch {
-            isDownloading = false
+            isLoading = false
             self.error = "Failed to load model: \(error.localizedDescription)"
             throw error
         }
-    }
-
-    func setQuantization(_ value: ChatterboxTurboQuantization) {
-        guard value != quantization else { return }
-        quantization = value
-        UserDefaults.standard.set(value.rawValue, forKey: "ttsQuantization")
-        unloadModel()
     }
 
     func unloadModel() {
@@ -160,20 +161,22 @@ final class VoiceCloningManager {
 
     func createVoiceProfile(from audioURL: URL, name: String) async throws -> VoiceProfile {
         guard let engine else {
-            throw NSError(domain: "VoiceCloning", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Model not loaded"])
+            throw NSError(
+                domain: "VoiceCloning", code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Model not loaded"])
         }
 
         print("[VoiceCloning] Creating profile '\(name)'")
 
-        let destinationURL = voiceProfilesDirectory.appendingPathComponent("\(UUID().uuidString).wav")
+        let fileName = "\(UUID().uuidString).wav"
+        let destinationURL = profilesDirectory.appendingPathComponent(fileName)
         try FileManager.default.copyItem(at: audioURL, to: destinationURL)
 
         let referenceAudio = try await engine.prepareReferenceAudio(from: destinationURL)
 
         let profile = VoiceProfile(
             name: name,
-            audioFilePath: destinationURL.path,
+            audioFilePath: fileName,
             sampleRate: referenceAudio.sampleRate,
             duration: referenceAudio.duration
         )
@@ -188,7 +191,8 @@ final class VoiceCloningManager {
 
     func deleteVoiceProfile(_ profile: VoiceProfile) {
         preparedVoices.removeValue(forKey: profile.name)
-        try? FileManager.default.removeItem(atPath: profile.audioFilePath)
+        let url = audioURL(for: profile)
+        try? FileManager.default.removeItem(at: url)
         availableProfiles.removeAll { $0.id == profile.id }
         if currentVoiceProfileName == profile.name {
             setActiveProfile(nil)
@@ -203,7 +207,8 @@ final class VoiceCloningManager {
 
     private func loadSavedProfiles() {
         guard let data = try? Data(contentsOf: profilesFileURL),
-              let profiles = try? JSONDecoder().decode([VoiceProfile].self, from: data) else { return }
+            let profiles = try? JSONDecoder().decode([VoiceProfile].self, from: data)
+        else { return }
         availableProfiles = profiles
         print("[VoiceCloning] Loaded \(profiles.count) profiles")
     }
@@ -213,37 +218,25 @@ final class VoiceCloningManager {
         try? data.write(to: profilesFileURL, options: .atomic)
     }
 
-    /// Resolve audio file path — handles stale absolute paths from container UUID changes
-    private func resolveAudioPath(for profile: VoiceProfile) -> URL? {
-        // Try stored path first
-        let storedPath = profile.audioFilePath
-        if FileManager.default.fileExists(atPath: storedPath) {
-            return URL(fileURLWithPath: storedPath)
-        }
-        // Fall back: reconstruct from filename in current voice_profiles directory
-        let filename = URL(fileURLWithPath: storedPath).lastPathComponent
-        let resolved = voiceProfilesDirectory.appendingPathComponent(filename)
-        if FileManager.default.fileExists(atPath: resolved.path) {
-            print("[VoiceCloning] Resolved stale path for '\(profile.name)' → \(resolved.path)")
-            return resolved
-        }
-        print("[VoiceCloning] Audio file missing for '\(profile.name)': \(filename)")
-        return nil
-    }
-
-    private func getReferenceAudio(for profileName: String?) async throws -> ChatterboxTurboReferenceAudio? {
+    private func getReferenceAudio(for profileName: String?) async throws
+        -> ChatterboxTurboReferenceAudio?
+    {
         guard let name = profileName,
-              let profile = availableProfiles.first(where: { $0.name == name }),
-              let engine else {
-            print("[VoiceCloning] getReferenceAudio: profileName=\(profileName ?? "nil"), profiles=\(availableProfiles.count), engine=\(engine != nil)")
+            let profile = availableProfiles.first(where: { $0.name == name }),
+            let engine
+        else {
             return nil
         }
 
         if let cached = preparedVoices[name] { return cached }
 
-        guard let audioURL = resolveAudioPath(for: profile) else { return nil }
+        let url = audioURL(for: profile)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            print("[VoiceCloning] Audio file missing for '\(name)'")
+            return nil
+        }
 
-        let ref = try await engine.prepareReferenceAudio(from: audioURL)
+        let ref = try await engine.prepareReferenceAudio(from: url)
         preparedVoices[name] = ref
         return ref
     }
@@ -253,10 +246,11 @@ final class VoiceCloningManager {
 
         for profile in availableProfiles {
             guard preparedVoices[profile.name] == nil else { continue }
-            guard let audioURL = resolveAudioPath(for: profile) else { continue }
+            let url = audioURL(for: profile)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
 
             do {
-                let ref = try await engine.prepareReferenceAudio(from: audioURL)
+                let ref = try await engine.prepareReferenceAudio(from: url)
                 preparedVoices[profile.name] = ref
                 print("[VoiceCloning] Prepared reference audio for '\(profile.name)'")
             } catch {
@@ -265,31 +259,19 @@ final class VoiceCloningManager {
         }
     }
 
-    /// Silent warmup: run a tiny generation to prime the compute graph so the first real speak is fast
-    private func warmup() async {
-        guard let engine else { return }
-        print("[VoiceCloning] Warming up TTS...")
-        do {
-            let ref = preparedVoices.values.first
-            let stream = engine.generateStreaming("Hello.", referenceAudio: ref)
-            for try await _ in stream { break } // consume one chunk then stop
-            await engine.stop()
-            MLXMemory.clearCache()
-            print("[VoiceCloning] Warmup complete")
-        } catch {
-            print("[VoiceCloning] Warmup failed (non-fatal): \(error)")
-        }
-    }
-
     // MARK: - TTS
 
     func speak(_ text: String, voiceProfileName: String? = nil) async {
+        // Bump generation so stale completions don't clear our task reference
+        speakGeneration += 1
+        let myGeneration = speakGeneration
+
         if currentTask != nil {
             stop()
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
 
-        isCancelled = false
+        print("[VoiceCloning] speak() — \(text.count) chars, voice: \(voiceProfileName ?? "default")")
 
         if engine == nil || !isModelLoaded {
             do {
@@ -306,231 +288,187 @@ final class VoiceCloningManager {
         }
 
         let cleanText = stripMarkdown(from: text)
-        guard !cleanText.isEmpty else { return }
-
-        isSpeaking = true
-        let profileName = voiceProfileName ?? currentVoiceProfileName
-
-        currentTask = Task { @MainActor in
-            await synthesizeAndPlay(engine: engine, text: cleanText, profileName: profileName)
+        guard !cleanText.isEmpty else {
+            print("[VoiceCloning] speak() — text empty after stripMarkdown")
+            self.error = "Nothing to say."
+            return
         }
 
-        await currentTask?.value
-        currentTask = nil
+        isSpeaking = true
+        error = nil
+        let profileName = voiceProfileName ?? currentVoiceProfileName
+
+        // Use an unstructured Task so stop() can cancel it independently
+        let task = Task { @MainActor in
+            await self.synthesizeAndPlay(engine: engine, text: cleanText, profileName: profileName)
+        }
+        currentTask = task
+
+        await task.value
+
+        // Only clear if we're still the current generation (not superseded by a new speak())
+        if speakGeneration == myGeneration {
+            currentTask = nil
+        }
     }
 
-    private func synthesizeAndPlay(engine: ChatterboxTurboEngine, text: String, profileName: String?) async {
-        guard !isCancelled else { return }
+    private func synthesizeAndPlay(
+        engine: ChatterboxTurboEngine, text: String, profileName: String?
+    ) async {
+        guard !Task.isCancelled else { return }
 
         do {
             let referenceAudio = try await getReferenceAudio(for: profileName)
-            print("[VoiceCloning] Reference audio: \(referenceAudio != nil ? "custom profile" : "default (will be auto-loaded)")")
+            print("[VoiceCloning] Reference audio: \(referenceAudio?.description ?? "using default")")
 
-            try setupAudioEngine()
-            startMetering()
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(
+                .playAndRecord, mode: .default,
+                options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setActive(true)
 
-            print("[VoiceCloning] Starting streaming synthesis for: \"\(text.prefix(50))\"...")
+            // Stream sentence-by-sentence: play each chunk as it's generated
+            print("[VoiceCloning] Streaming audio for \(text.count) chars...")
             let stream = engine.generateStreaming(text, referenceAudio: referenceAudio)
-
-            var totalSamples = 0
-            var chunksBuffered = 0
+            var chunkIndex = 0
 
             for try await chunk in stream {
-                guard !isCancelled else { break }
+                guard !Task.isCancelled else { break }
 
-                let sampleCount = chunk.samples.count
-                if sampleCount > 0 {
-                    scheduleAudioChunk(chunk.samples)
-                    totalSamples += sampleCount
-                    chunksBuffered += 1
-                    print("[VoiceCloning] Chunk \(chunksBuffered): \(sampleCount) samples (\(String(format: "%.2f", Double(sampleCount) / Double(sampleRate)))s)")
+                let samples = chunk.samples
+                guard !samples.isEmpty else { continue }
 
-                    if !isPlaying && chunksBuffered >= 1 {
-                        playerNode?.play()
-                        isPlaying = true
-                        print("[VoiceCloning] Playback started")
-                    }
+                chunkIndex += 1
+                print("[VoiceCloning] Chunk \(chunkIndex): \(samples.count) samples (\(String(format: "%.1f", Double(samples.count) / Double(sampleRate)))s)")
+
+                let url = try Self.saveTempWAV(samples: samples, sampleRate: chunk.sampleRate)
+                let player = try AVAudioPlayer(contentsOf: url)
+                player.isMeteringEnabled = true
+                self.audioPlayer = player
+                player.play()
+
+                // Wait for this chunk to finish playing
+                while player.isPlaying, !Task.isCancelled {
+                    player.updateMeters()
+                    let power = player.averagePower(forChannel: 0)
+                    audioLevel = max(0, min(1, (power + 50) / 50))
+                    try? await Task.sleep(nanoseconds: 50_000_000)
                 }
+
+                self.audioPlayer = nil
+                try? FileManager.default.removeItem(at: url)
             }
 
-            if !isPlaying && chunksBuffered > 0 {
-                playerNode?.play()
-                isPlaying = true
-                print("[VoiceCloning] Playback started (after stream)")
+            if chunkIndex == 0, !Task.isCancelled {
+                self.error = "No audio generated. Try a different phrase."
+                print("[VoiceCloning] WARNING: 0 chunks produced")
             }
 
-            print("[VoiceCloning] Stream complete: \(chunksBuffered) chunks, \(totalSamples) total samples")
-
-            MLXMemory.clearCache()
-
-            if totalSamples > 0 {
-                await waitForPlaybackCompletion()
-            }
-
-            let duration = Double(totalSamples) / Double(sampleRate)
-            print("[VoiceCloning] Played \(String(format: "%.1f", duration))s of audio")
+            audioLevel = 0
         } catch {
-            if !isCancelled {
+            if !Task.isCancelled {
                 print("[VoiceCloning] Synthesis error: \(error)")
                 self.error = error.localizedDescription
             }
         }
 
-        stopAudioEngine()
+        MLXMemory.clearCache()
 
-        if !isCancelled {
+        if !Task.isCancelled {
             isSpeaking = false
         }
     }
 
-    // MARK: - Audio Engine
+    /// Write Float samples to a temporary 16-bit WAV file for AVAudioPlayer.
+    private nonisolated static func saveTempWAV(samples: [Float], sampleRate: Int) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
 
-    private func setupAudioEngine() throws {
-        stopAudioEngine()
+        let numSamples = samples.count
+        let bitsPerSample: Int = 16
+        let bytesPerSample = bitsPerSample / 8
+        let dataSize = numSamples * bytesPerSample
+        let fileSize = 44 + dataSize  // WAV header is 44 bytes
 
-        // Ensure audio session is active for playback
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
-        try session.setActive(true)
+        var data = Data(capacity: fileSize)
 
-        let avEngine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
+        // RIFF header
+        data.append(contentsOf: "RIFF".utf8)
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(fileSize - 8).littleEndian) { Array($0) })
+        data.append(contentsOf: "WAVE".utf8)
 
-        avEngine.attach(player)
+        // fmt chunk
+        data.append(contentsOf: "fmt ".utf8)
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })  // PCM
+        data.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })  // mono
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(sampleRate).littleEndian) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(sampleRate * bytesPerSample).littleEndian) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: UInt16(bytesPerSample).littleEndian) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: UInt16(bitsPerSample).littleEndian) { Array($0) })
 
-        let format = AVAudioFormat(standardFormatWithSampleRate: Double(sampleRate), channels: 1)!
-        avEngine.connect(player, to: avEngine.mainMixerNode, format: format)
+        // data chunk
+        data.append(contentsOf: "data".utf8)
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(dataSize).littleEndian) { Array($0) })
 
-        try avEngine.start()
-
-        self.audioEngine = avEngine
-        self.playerNode = player
-        self.audioFormat = format
-        self.isPlaying = false
-
-        print("[VoiceCloning] Audio engine started (format: \(format))")
-    }
-
-    private func scheduleAudioChunk(_ samples: [Float]) {
-        guard let playerNode, let format = audioFormat else { return }
-
-        let frameCount = AVAudioFrameCount(samples.count)
-        guard frameCount > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
-
-        buffer.frameLength = frameCount
-
-        if let channelData = buffer.floatChannelData?[0] {
-            _ = samples.withUnsafeBufferPointer { srcPtr in
-                memcpy(channelData, srcPtr.baseAddress!, samples.count * MemoryLayout<Float>.size)
-            }
+        // Convert Float [-1,1] → Int16
+        for sample in samples {
+            let clamped = max(-1.0, min(1.0, sample))
+            let int16 = Int16(clamped * Float(Int16.max))
+            data.append(contentsOf: withUnsafeBytes(of: int16.littleEndian) { Array($0) })
         }
 
-        playerNode.scheduleBuffer(buffer)
-    }
-
-    private func waitForPlaybackCompletion() async {
-        guard let playerNode, let format = audioFormat else { return }
-
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            guard let emptyBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1) else {
-                continuation.resume()
-                return
-            }
-            emptyBuffer.frameLength = 1
-            playerNode.scheduleBuffer(emptyBuffer) {
-                continuation.resume()
-            }
-        }
-    }
-
-    private func stopAudioEngine() {
-        stopMetering()
-        playerNode?.stop()
-        audioEngine?.stop()
-        playerNode = nil
-        audioEngine = nil
-        audioFormat = nil
-        isPlaying = false
-        audioLevel = 0
-    }
-
-    // MARK: - Metering
-
-    private func startMetering() {
-        meteringTask?.cancel()
-
-        meteringTask = Task { @MainActor in
-            var phase: Float = 0
-            var targetLevel: Float = 0.7
-            var currentLevel: Float = 0
-
-            while !Task.isCancelled {
-                if self.isPlaying {
-                    phase += Float.random(in: 0.08...0.15)
-                    let baseWave = 0.5 + 0.3 * sin(phase)
-                    let microPulse = Float.random(in: -0.2...0.3)
-                    let emphasis: Float = Float.random(in: 0...1) > 0.85 ? Float.random(in: 0.2...0.4) : 0
-                    targetLevel = max(0.3, min(1.0, baseWave + microPulse + emphasis))
-                    currentLevel += (targetLevel - currentLevel) * 0.3
-                    self.audioLevel = currentLevel
-                } else {
-                    currentLevel *= 0.80
-                    self.audioLevel = currentLevel
-                    phase = 0
-                }
-
-                try? await Task.sleep(nanoseconds: 16_666_667) // ~60fps
-            }
-        }
-    }
-
-    private func stopMetering() {
-        meteringTask?.cancel()
-        meteringTask = nil
-
-        Task { @MainActor in
-            for _ in 0..<10 {
-                self.audioLevel *= 0.7
-                try? await Task.sleep(nanoseconds: 16_000_000)
-            }
-            self.audioLevel = 0
-        }
+        try data.write(to: url)
+        return url
     }
 
     // MARK: - Controls
 
     func stop() {
-        isCancelled = true
-        isSpeaking = false
-        isPlaying = false
-
-        stopAudioEngine()
-
         currentTask?.cancel()
         currentTask = nil
-        currentSentence = ""
+        isSpeaking = false
+
+        audioPlayer?.stop()
+        audioPlayer = nil
+        meteringTask?.cancel()
+        meteringTask = nil
         audioLevel = 0
 
-        Task { @MainActor in
+        Task {
             await engine?.stop()
         }
+    }
+
+    func clearError() {
+        error = nil
     }
 
     // MARK: - Text Processing
 
     private func stripMarkdown(from text: String) -> String {
         var result = text
-        result = result.replacingOccurrences(of: "```[\\s\\S]*?```", with: "", options: .regularExpression)
-        result = result.replacingOccurrences(of: "`([^`]+)`", with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(of: "\\*\\*([^*]+)\\*\\*", with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(of: "__([^_]+)__", with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(of: "\\*([^*]+)\\*", with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(of: "_([^_]+)_", with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
-        result = result.replacingOccurrences(of: "(?m)^[\\-\\*]\\s+", with: "", options: .regularExpression)
-        result = result.replacingOccurrences(of: "(?m)^\\d+\\.\\s+", with: "", options: .regularExpression)
-        result = result.replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "```[\\s\\S]*?```", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "`([^`]+)`", with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "\\*\\*([^*]+)\\*\\*", with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "__([^_]+)__", with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "\\*([^*]+)\\*", with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "_([^_]+)_", with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "(?m)^[\\-\\*]\\s+", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "(?m)^\\d+\\.\\s+", with: "", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "\\[([^\\]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
         result = result.replacingOccurrences(of: "\u{2014}", with: ",")
         result = result.replacingOccurrences(of: "\u{2013}", with: ",")
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
