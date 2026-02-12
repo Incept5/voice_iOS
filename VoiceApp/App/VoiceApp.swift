@@ -4,6 +4,8 @@ import MLXAudio
 
 @main
 struct VoiceApp: App {
+    @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
+
     init() {
         configureAudioSession()
         MLXMemory.configure(cacheLimit: 512 * 1024 * 1024)
@@ -11,7 +13,11 @@ struct VoiceApp: App {
 
     var body: some Scene {
         WindowGroup {
-            HomeView()
+            if hasSeenOnboarding {
+                HomeView()
+            } else {
+                OnboardingView(hasSeenOnboarding: $hasSeenOnboarding)
+            }
         }
     }
 

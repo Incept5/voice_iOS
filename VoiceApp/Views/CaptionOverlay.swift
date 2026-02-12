@@ -9,12 +9,12 @@ struct CaptionOverlay: View {
             Text(text)
                 .font(.subheadline)
                 .foregroundStyle(isError ? .red : .white)
-                .lineLimit(3)
+                .lineLimit(6)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
-                .background(.ultraThinMaterial.opacity(0.6))
+                .background(.ultraThinMaterial.opacity(0.85))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }

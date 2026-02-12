@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ScheduleControlsView: View {
     @Bindable var calendar: CalendarProvider
-    let pipelineActive: Bool
+    let pipelineLabel: String?
     let isSpeaking: Bool
     let onBriefMe: (String, String) -> Void
     let onStop: () -> Void
@@ -22,16 +22,21 @@ struct ScheduleControlsView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         if calendar.todayEvents.isEmpty && calendar.reminders.isEmpty {
-                            Text("Nothing on your schedule today")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity)
+                            VStack(spacing: 8) {
+                                Image(systemName: "calendar.badge.checkmark")
+                                    .font(.title2)
+                                    .foregroundStyle(.secondary)
+                                Text("Nothing on your schedule today")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
                         } else {
                             if !calendar.todayEvents.isEmpty {
                                 Text("Today's Events")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 ForEach(calendar.todayEvents, id: \.self) { event in
-                                    Text(event)
+                                    Label(event, systemImage: "calendar")
                                         .font(.subheadline)
                                 }
                             }
@@ -42,7 +47,7 @@ struct ScheduleControlsView: View {
                                     .foregroundStyle(.secondary)
                                     .padding(.top, 4)
                                 ForEach(calendar.reminders, id: \.self) { reminder in
-                                    Text(reminder)
+                                    Label(reminder, systemImage: "checklist")
                                         .font(.subheadline)
                                 }
                             }
@@ -50,7 +55,7 @@ struct ScheduleControlsView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 120)
+                .frame(maxHeight: 160)
 
                 if isSpeaking {
                     Button {
@@ -71,15 +76,20 @@ struct ScheduleControlsView: View {
                         )
                         onBriefMe(user, system)
                     } label: {
-                        Label(
-                            pipelineActive ? "Generating..." : "Brief Me",
-                            systemImage: pipelineActive ? "ellipsis" : "calendar"
-                        )
+                        HStack(spacing: 8) {
+                            if pipelineLabel != nil {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(pipelineLabel ?? "")
+                            } else {
+                                Label("Brief Me", systemImage: "calendar")
+                            }
+                        }
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(pipelineActive)
+                    .disabled(pipelineLabel != nil)
                 }
             }
 

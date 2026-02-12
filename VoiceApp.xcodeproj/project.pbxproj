@@ -14,6 +14,7 @@
 		1C02795EE8EF8E347700D39A /* VoiceCloningManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F358EDCB85B76CCD7CEC5325 /* VoiceCloningManager.swift */; };
 		220DF723BB58B334D60C81CE /* PersonalityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A773BB21C0425B55D6815F3 /* PersonalityManager.swift */; };
 		2607CCF9F62BF71308AFC536 /* Color+Hex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73B0ACA568D4574485CEEE2E /* Color+Hex.swift */; };
+		361A7091869CFD19530CD49C /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1154E431C30638566AC736EC /* OnboardingView.swift */; };
 		393A451EBD5B032A76BF6D50 /* ScreenTimeReportExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE36F638DBD0486C6047594D /* ScreenTimeReportExtension.swift */; };
 		40752FE003D53015B63495C7 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 22081DDCF763E0FFE766CB80 /* Metal.framework */; };
 		4346812B8C14378273CC46FF /* MetalPerformanceShadersGraph.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5A90F0AA6F3B2CBCC165E663 /* MetalPerformanceShadersGraph.framework */; };
@@ -27,6 +28,7 @@
 		70A143A830E7907E4556D064 /* ScheduleControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9683D1CCAE5296AF434E1EC0 /* ScheduleControlsView.swift */; };
 		7EE6124E5179BD822302BE5D /* Personality.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165BD9F50A00C2B9DB72C1C8 /* Personality.swift */; };
 		B60243D091973374F04F5886 /* VoiceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB13B59DA4F31C5B8ED378B /* VoiceApp.swift */; };
+		B97F33609DE52FF83C453409 /* VoiceCloneControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C41D3474E2CB8CEBC50FE65D /* VoiceCloneControlsView.swift */; };
 		BB45E85D0EF4052F4A8248E6 /* EventKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D18A5E7BE3D9AB523843728 /* EventKit.framework */; };
 		BCF230640B972D87B0EB96E4 /* VoiceSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20387185BF79CF2BE2AA2F66 /* VoiceSetupView.swift */; };
 		BF8F5E5C90AD7111067EA488 /* SphereView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16446D7209C704C2C1779B7E /* SphereView.swift */; };
@@ -68,6 +70,7 @@
 /* Begin PBXFileReference section */
 		0C12A6B7BA642CBD48CC3DC6 /* DockBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockBar.swift; sourceTree = "<group>"; };
 		0FB13B59DA4F31C5B8ED378B /* VoiceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceApp.swift; sourceTree = "<group>"; };
+		1154E431C30638566AC736EC /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		16446D7209C704C2C1779B7E /* SphereView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SphereView.swift; sourceTree = "<group>"; };
 		165BD9F50A00C2B9DB72C1C8 /* Personality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Personality.swift; sourceTree = "<group>"; };
 		174B5EBEC7AE371ED0D6E84D /* FunControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FunControlsView.swift; sourceTree = "<group>"; };
@@ -88,6 +91,7 @@
 		8FF77FC90683E9B823E68BAB /* AppMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMode.swift; sourceTree = "<group>"; };
 		9683D1CCAE5296AF434E1EC0 /* ScheduleControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleControlsView.swift; sourceTree = "<group>"; };
 		BC1E76303C8C91F4DD0BA09F /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		C41D3474E2CB8CEBC50FE65D /* VoiceCloneControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCloneControlsView.swift; sourceTree = "<group>"; };
 		C74923F021ADEF0BA03A16B5 /* MetalPerformanceShaders.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalPerformanceShaders.framework; path = System/Library/Frameworks/MetalPerformanceShaders.framework; sourceTree = SDKROOT; };
 		CAE2CAC8850C3B1CD8987235 /* PromptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptBuilder.swift; sourceTree = "<group>"; };
 		DD1848C9E484B2049DC25F56 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -209,6 +213,7 @@
 				174B5EBEC7AE371ED0D6E84D /* FunControlsView.swift */,
 				9683D1CCAE5296AF434E1EC0 /* ScheduleControlsView.swift */,
 				F9CE871815FB75BBE016B375 /* ScreenTimeControlsView.swift */,
+				C41D3474E2CB8CEBC50FE65D /* VoiceCloneControlsView.swift */,
 			);
 			path = Controls;
 			sourceTree = "<group>";
@@ -228,6 +233,7 @@
 				42F8093571C19FC30AC93869 /* CaptionOverlay.swift */,
 				0C12A6B7BA642CBD48CC3DC6 /* DockBar.swift */,
 				DD1848C9E484B2049DC25F56 /* HomeView.swift */,
+				1154E431C30638566AC736EC /* OnboardingView.swift */,
 				F0EE85690A755E47FED811FA /* PersonalityPicker.swift */,
 				BC1E76303C8C91F4DD0BA09F /* SettingsView.swift */,
 				16446D7209C704C2C1779B7E /* SphereView.swift */,
@@ -355,6 +361,7 @@
 				F694D6B12356B1C6693AC426 /* DockBar.swift in Sources */,
 				00E281DB2F8127463D8F9F8D /* FunControlsView.swift in Sources */,
 				49775B74971FF05BB94CFF47 /* HomeView.swift in Sources */,
+				361A7091869CFD19530CD49C /* OnboardingView.swift in Sources */,
 				7EE6124E5179BD822302BE5D /* Personality.swift in Sources */,
 				220DF723BB58B334D60C81CE /* PersonalityManager.swift in Sources */,
 				0F19C219A073D9688631EB7D /* PersonalityPicker.swift in Sources */,
@@ -366,6 +373,7 @@
 				FC5479050873C876182A94D7 /* SettingsView.swift in Sources */,
 				BF8F5E5C90AD7111067EA488 /* SphereView.swift in Sources */,
 				B60243D091973374F04F5886 /* VoiceApp.swift in Sources */,
+				B97F33609DE52FF83C453409 /* VoiceCloneControlsView.swift in Sources */,
 				1C02795EE8EF8E347700D39A /* VoiceCloningManager.swift in Sources */,
 				BCF230640B972D87B0EB96E4 /* VoiceSetupView.swift in Sources */,
 			);

@@ -10,27 +10,10 @@ struct VoiceSetupView: View {
 
     var body: some View {
             List {
-                // MARK: - Model Section
                 Section {
-                    if manager.isModelLoaded {
-                        Label("Model Ready", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else if manager.isLoading {
-                        HStack {
-                            ProgressView(value: manager.loadingProgress)
-                            Text("\(Int(manager.loadingProgress * 100))%")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Button {
-                            Task { try? await manager.loadModel() }
-                        } label: {
-                            Label("Load Model", systemImage: "arrow.down.circle")
-                        }
-                    }
-                } header: {
-                    Text("Chatterbox Turbo")
+                    Text("Record a voice sample to clone. Save it as a profile and pick it in Settings.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
 
                 // MARK: - Recording Section
@@ -147,7 +130,7 @@ struct VoiceSetupView: View {
                     Text("Voice Profiles")
                 }
             }
-            .navigationTitle("Voice")
+            .navigationTitle("Voice Clone")
             .alert("Name Your Voice", isPresented: $showingNamePrompt) {
                 TextField("Voice name", text: $profileName)
                 Button("Save") { saveProfile() }

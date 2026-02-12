@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(swift package resolve:*)",
+      "Bash(swift build:*)",
+      "Bash(xcodebuild build:*)",
+      "Bash(wc:*)",
+      "Bash(xcodegen generate:*)",
+      "Bash(xcrun simctl:*)",
+      "Bash(xcodebuild clean build:*)",
+      "Bash(xcodebuild -resolvePackageDependencies:*)",
+      "Bash(ln:*)",
+      "Bash(open:*)",
+      "Bash(osascript:*)",
+      "Bash(npx skills add:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(find:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(git push:*)",
+      "WebSearch",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:www.appcoda.com)",
+      "Bash(echo:*)"
+    ]
+  }
+}

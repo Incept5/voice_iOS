@@ -3,7 +3,7 @@ import SwiftUI
 struct FunControlsView: View {
     @Bindable var personality: PersonalityManager
     @Binding var topicText: String
-    let pipelineActive: Bool
+    let pipelineLabel: String?
     let isSpeaking: Bool
     let voiceProfileName: String?
     let onGo: () -> Void
@@ -11,18 +11,26 @@ struct FunControlsView: View {
 
     @FocusState private var topicFocused: Bool
 
+    private var pipelineActive: Bool { pipelineLabel != nil }
+
     private var goDisabled: Bool {
         topicText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pipelineActive
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            PersonalityPicker(personality: personality)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Personality")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                PersonalityPicker(personality: personality)
+            }
 
             if let voiceName = voiceProfileName {
-                HStack(spacing: 4) {
-                    Image(systemName: "waveform")
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.circle.fill")
                     Text(voiceName)
+                        .fontWeight(.medium)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -53,10 +61,15 @@ struct FunControlsView: View {
                     topicFocused = false
                     onGo()
                 } label: {
-                    Label(
-                        pipelineActive ? "Generating..." : "Go",
-                        systemImage: pipelineActive ? "ellipsis" : "sparkles"
-                    )
+                    HStack(spacing: 8) {
+                        if pipelineActive {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(pipelineLabel ?? "")
+                        } else {
+                            Label("Go", systemImage: "sparkles")
+                        }
+                    }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)

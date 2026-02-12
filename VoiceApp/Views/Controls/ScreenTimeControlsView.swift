@@ -3,7 +3,7 @@ import SwiftUI
 
 struct ScreenTimeControlsView: View {
     @Bindable var screenTime: ScreenTimeProvider
-    let pipelineActive: Bool
+    let pipelineLabel: String?
     let isSpeaking: Bool
     let onRoast: (String, String) -> Void
     let onStop: () -> Void
@@ -41,7 +41,7 @@ struct ScreenTimeControlsView: View {
                     DeviceActivityReport.Context(rawValue: ScreenTimeConstants.reportContext),
                     filter: todayFilter
                 )
-                .frame(maxHeight: 120)
+                .frame(maxHeight: 160)
                 .onAppear {
                     // Give the extension time to render and write data
                     Task {
@@ -69,15 +69,20 @@ struct ScreenTimeControlsView: View {
                         )
                         onRoast(user, system)
                     } label: {
-                        Label(
-                            pipelineActive ? "Generating..." : "Roast My Screen Time",
-                            systemImage: pipelineActive ? "ellipsis" : "flame"
-                        )
+                        HStack(spacing: 8) {
+                            if pipelineLabel != nil {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(pipelineLabel ?? "")
+                            } else {
+                                Label("Roast My Screen Time", systemImage: "flame")
+                            }
+                        }
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(pipelineActive)
+                    .disabled(pipelineLabel != nil)
                 }
             }
 

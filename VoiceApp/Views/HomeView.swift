@@ -8,6 +8,7 @@ struct HomeView: View {
 
     @State private var selectedMode: AppMode = .fun
     @State private var showSettings = false
+    @State private var showVoiceSetup = false
     @State private var topicText = ""
     @State private var pipelinePhase: PipelinePhase = .idle
 
@@ -45,6 +46,14 @@ struct HomeView: View {
         pipelinePhase != .idle
     }
 
+    private var pipelineLabel: String? {
+        switch pipelinePhase {
+        case .idle: nil
+        case .generating: "Writing\u{2026}"
+        case .loadingVoice: "Preparing voice\u{2026}"
+        }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -64,16 +73,28 @@ struct HomeView: View {
 
             // Mode-specific controls
             controlsForCurrentMode
+                .frame(minHeight: 220, alignment: .top)
                 .padding()
-                .layoutPriority(1)
+                .animation(.easeInOut(duration: 0.2), value: selectedMode)
 
             // Dock
             DockBar(selectedMode: $selectedMode) {
                 showSettings = true
             }
         }
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .sheet(isPresented: $showVoiceSetup) {
+            NavigationStack {
+                VoiceSetupView()
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showVoiceSetup = false }
+                        }
+                    }
+            }
         }
     }
 
@@ -86,7 +107,7 @@ struct HomeView: View {
             FunControlsView(
                 personality: personality,
                 topicText: $topicText,
-                pipelineActive: pipelineActive,
+                pipelineLabel: pipelineLabel,
                 isSpeaking: manager.isSpeaking,
                 voiceProfileName: manager.currentVoiceProfileName,
                 onGo: { goFun() },
@@ -96,7 +117,7 @@ struct HomeView: View {
         case .schedule:
             ScheduleControlsView(
                 calendar: calendarProvider,
-                pipelineActive: pipelineActive,
+                pipelineLabel: pipelineLabel,
                 isSpeaking: manager.isSpeaking,
                 onBriefMe: { userPrompt, systemPrompt in
                     goWithPrompts(userPrompt: userPrompt, systemPrompt: systemPrompt)
@@ -107,12 +128,18 @@ struct HomeView: View {
         case .screenTime:
             ScreenTimeControlsView(
                 screenTime: screenTimeProvider,
-                pipelineActive: pipelineActive,
+                pipelineLabel: pipelineLabel,
                 isSpeaking: manager.isSpeaking,
                 onRoast: { userPrompt, systemPrompt in
                     goWithPrompts(userPrompt: userPrompt, systemPrompt: systemPrompt)
                 },
                 onStop: { stopPipeline() }
+            )
+
+        case .voiceClone:
+            VoiceCloneControlsView(
+                manager: manager,
+                showVoiceSetup: $showVoiceSetup
             )
         }
     }
