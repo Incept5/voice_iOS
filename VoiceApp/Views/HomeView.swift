@@ -26,7 +26,7 @@ struct HomeView: View {
         // During the pipeline the button already communicates state.
         if pipelinePhase == .idle {
             if manager.isLoading {
-                return "Loading TTS model\u{2026} \(Int(manager.loadingProgress * 100))%"
+                return "Loading TTS model\u{2026} \(Int(manager.modelDownloadProgress * 100))%"
             }
             if personality.isLoading {
                 return "Loading LLM\u{2026} \(Int(personality.loadingProgress * 100))%"

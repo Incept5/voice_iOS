@@ -56,19 +56,29 @@ struct VoiceSetupView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        Button {
-                            showingNamePrompt = true
-                        } label: {
-                            Label("Save as Voice Profile", systemImage: "person.crop.circle.badge.plus")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .disabled(!manager.isModelLoaded)
+                        if manager.isSavingProfile {
+                            HStack {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Saving...")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                        } else {
+                            Button {
+                                showingNamePrompt = true
+                            } label: {
+                                Label("Save as Voice Profile", systemImage: "person.crop.circle.badge.plus")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .disabled(!manager.isModelLoaded)
 
-                        Button(role: .destructive) {
-                            recorder.deleteRecording()
-                            recordedURL = nil
-                        } label: {
-                            Label("Discard", systemImage: "trash")
+                            Button(role: .destructive) {
+                                recorder.deleteRecording()
+                                recordedURL = nil
+                            } label: {
+                                Label("Discard", systemImage: "trash")
+                            }
                         }
                     } else {
                         Button {
@@ -133,7 +143,10 @@ struct VoiceSetupView: View {
             .navigationTitle("Voice Clone")
             .alert("Name Your Voice", isPresented: $showingNamePrompt) {
                 TextField("Voice name", text: $profileName)
-                Button("Save") { saveProfile() }
+                Button("Save") {
+                    showingNamePrompt = false
+                    saveProfile()
+                }
                 Button("Cancel", role: .cancel) { profileName = "" }
             } message: {
                 Text("Enter a name for this voice profile.")

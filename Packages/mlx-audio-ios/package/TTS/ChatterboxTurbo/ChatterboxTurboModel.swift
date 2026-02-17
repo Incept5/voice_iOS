@@ -205,23 +205,24 @@ class ChatterboxTurboModel: Module {
   static func load(
     quantization: ChatterboxTurboQuantization = .q4,
     s3TokenizerRepoId: String = s3TokenizerRepoId,
-    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }
+    modelProgressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+    tokenizerProgressHandler: @escaping @Sendable (Progress) -> Void = { _ in }
   ) async throws -> ChatterboxTurboModel {
     let repoId = repoId(quantization: quantization)
 
     Log.model.info("Loading ChatterboxTurbo (\(quantization.rawValue)) from \(repoId)...")
 
-    // Download model and S3Tokenizer
+    // Download model and S3Tokenizer with separate progress handlers
     async let modelDirectoryTask = HubConfiguration.shared.snapshot(
       from: repoId,
       matching: ["model.safetensors", "tokenizer.json", "tokenizer_config.json", "config.json", "conds.safetensors"],
-      progressHandler: progressHandler
+      progressHandler: modelProgressHandler
     )
 
     async let s3TokenizerDirectoryTask = HubConfiguration.shared.snapshot(
       from: s3TokenizerRepoId,
       matching: ["model.safetensors", "config.json"],
-      progressHandler: progressHandler
+      progressHandler: tokenizerProgressHandler
     )
 
     let (modelDirectory, s3TokenizerDirectory) = try await (modelDirectoryTask, s3TokenizerDirectoryTask)

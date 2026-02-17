@@ -47,8 +47,12 @@ final class VoiceCloningManager {
 
     // Model state
     var isLoading = false
-    var loadingProgress: Double = 0
+    var modelDownloadProgress: Double = 0
+    var tokenizerDownloadProgress: Double = 0
     var isModelLoaded = false
+
+    // Profile saving state
+    var isSavingProfile = false
 
     // Voice profiles
     var currentVoiceProfileName: String?
@@ -121,7 +125,8 @@ final class VoiceCloningManager {
         guard !isModelLoaded && !isLoading else { return }
 
         isLoading = true
-        loadingProgress = 0
+        modelDownloadProgress = 0
+        tokenizerDownloadProgress = 0
         error = nil
 
         print("[VoiceCloning] Loading model...")
@@ -129,11 +134,18 @@ final class VoiceCloningManager {
         do {
             engine = ChatterboxTurboEngine(quantization: .q4)
 
-            try await engine?.load { [weak self] progress in
-                Task { @MainActor [weak self] in
-                    self?.loadingProgress = progress.fractionCompleted
+            try await engine?.load(
+                modelProgressHandler: { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.modelDownloadProgress = progress.fractionCompleted
+                    }
+                },
+                tokenizerProgressHandler: { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.tokenizerDownloadProgress = progress.fractionCompleted
+                    }
                 }
-            }
+            )
 
             isLoading = false
             isModelLoaded = true
@@ -165,6 +177,9 @@ final class VoiceCloningManager {
                 domain: "VoiceCloning", code: -1,
                 userInfo: [NSLocalizedDescriptionKey: "Model not loaded"])
         }
+
+        isSavingProfile = true
+        defer { isSavingProfile = false }
 
         print("[VoiceCloning] Creating profile '\(name)'")
 

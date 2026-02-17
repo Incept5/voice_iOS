@@ -1,96 +1,124 @@
 # Voice iOS
 
-On-device AI voice app for iPhone. Generates spoken responses using a local LLM and TTS model — no cloud APIs, everything runs on your device.
+On-device AI voice app for iPhone. Generates spoken responses using a local LLM and voice-cloning TTS — no cloud APIs, no data leaves your device.
 
-## Features
+## What It Does
 
-### Three Modes
-- **Fun** — Pick a personality (Snoop Dogg, Trump, Morgan Freeman, Gordon Ramsay, Optimus Prime) and give it a topic. It generates a monologue and speaks it aloud in a cloned voice.
-- **Schedule** — Reads your calendar events and reminders, then briefs you on your day.
-- **Screen Time** — Shows your device usage and roasts your app habits.
+Pick a personality (Snoop Dogg, Morgan Freeman, Gordon Ramsay, etc.), give it a topic, and it generates a monologue and speaks it aloud — all running locally on your iPhone's GPU via [MLX](https://github.com/ml-explore/mlx-swift).
 
-### On-Device AI Pipeline
-1. **LLM** (Qwen3-1.7B-MLX-4bit) generates text locally via MLX
-2. LLM unloads from memory (~850MB freed)
-3. **TTS** (Chatterbox-Turbo-4bit) synthesizes speech via MLX
-4. Audio streams sentence-by-sentence — you hear the first sentence while the next is being generated
+**Three modes:**
 
-### Voice Cloning
-Record a short voice sample and the TTS model clones it for all spoken output.
+- **Fun** — Celebrity-style monologues on any topic, spoken in a cloned voice
+- **Schedule** — Reads your calendar and reminders, then briefs you on your day
+- **Screen Time** — Shows your device usage and roasts your app habits
+
+**How the pipeline works:**
+
+1. **LLM** ([Qwen3-1.7B-MLX-4bit](https://huggingface.co/Qwen/Qwen3-1.7B-MLX-4bit)) generates text on-device
+2. LLM unloads from memory (~1GB freed)
+3. **TTS** ([Chatterbox-Turbo-4bit](https://huggingface.co/mlx-community/Chatterbox-Turbo-4bit)) synthesizes speech with voice cloning
+4. Audio streams sentence-by-sentence — you hear the first sentence while the rest generate
 
 ## Requirements
 
-- iOS 18.4+
-- Physical iPhone (models run on Apple Silicon GPU via MLX)
-- ~2GB free storage (models download on first use)
-- Xcode 16+ with xcodegen installed
+- **Physical iPhone** with Apple Silicon (A14+). Models run on the GPU via MLX — the Simulator is not supported.
+- **iOS 18.4+**
+- **~2.5GB free storage** — models download from Hugging Face on first launch (~1.3GB LLM + ~1.3GB TTS)
+- **Xcode 16+**
+- **[xcodegen](https://github.com/yonaskolb/XcodeGen)** — `brew install xcodegen`
+- **Apple Developer account** (free or paid) — required for code signing and on-device deployment
 
-## Setup
+## Getting Started
 
-### 1. Install tools
-
-```bash
-brew install xcodegen
-```
-
-### 2. Generate the Xcode project
+### 1. Clone and generate the Xcode project
 
 ```bash
-git clone https://github.com/aderiz/voice_iOS.git
+git clone https://github.com/AdeRiz/voice_iOS.git
 cd voice_iOS
 xcodegen generate
 open VoiceApp.xcodeproj
 ```
 
-### 3. Configure signing
+### 2. Configure code signing
 
-In Xcode, select the **VoiceApp** target > **Signing & Capabilities**:
-- Set your **Team**
-- Change the **Bundle Identifier** to something unique to your team (e.g. `com.yourname.VoiceApp`)
+The project ships with placeholder signing identifiers that you **must** change to your own.
 
-Do the same for the **ScreenTimeReport** extension target (e.g. `com.yourname.VoiceApp.ScreenTimeReport`).
+**In `project.yml`**, replace the following values under both the `VoiceApp` and `ScreenTimeReport` targets:
 
-If you change the bundle IDs, also update them in:
-- `project.yml` (both `PRODUCT_BUNDLE_IDENTIFIER` values)
-- `VoiceApp.entitlements` and `ScreenTimeReport/ScreenTimeReport.entitlements` (the App Group ID)
-- `VoiceApp/Services/ScreenTimeConstants.swift` (the `appGroupID`)
-- `ScreenTimeReport/ScreenTimeReportExtension.swift` (the duplicated `appGroupID`)
+| Setting | Replace with |
+|---------|-------------|
+| `DEVELOPMENT_TEAM` | Your Apple Developer Team ID |
+| `PRODUCT_BUNDLE_IDENTIFIER` | A bundle ID unique to you (e.g. `com.yourname.VoiceApp`) |
 
-### 4. Set up App Group (required for real Screen Time data)
+The `ScreenTimeReport` extension's bundle ID must be a child of the main app's (e.g. `com.yourname.VoiceApp.ScreenTimeReport`).
 
-Go to [developer.apple.com/account/resources/identifiers](https://developer.apple.com/account/resources/identifiers):
+**Update the App Group ID** in these files to match your new bundle ID:
 
-1. **Register the App Group:**
-   - Sidebar > **App Groups** > click **+**
-   - Enter `group.com.yourname.VoiceApp` (matching your entitlements)
-   - Click **Continue** > **Register**
+| File | What to change |
+|------|---------------|
+| `VoiceApp.entitlements` | `group.com.incept5.VoiceApp` → `group.com.yourname.VoiceApp` |
+| `ScreenTimeReport/ScreenTimeReport.entitlements` | Same |
+| `VoiceApp/Services/ScreenTimeConstants.swift` | `appGroupID` string |
 
-2. **Register both App IDs** (if not already done by Xcode):
-   - Sidebar > **App IDs** > click **+** > select **App IDs**
-   - Register `com.yourname.VoiceApp` (type: App)
-   - Register `com.yourname.VoiceApp.ScreenTimeReport` (type: App)
+Then regenerate:
 
-3. **Enable capabilities on both App IDs:**
-   - Click each App ID > **Capabilities** tab
-   - Enable **App Groups** > select your group
-   - Enable **Family Controls**
-   - Click **Save**
+```bash
+xcodegen generate
+```
 
-4. Back in Xcode, go to **Signing & Capabilities** on each target and click the refresh icon to download updated provisioning profiles. Or just rebuild — Xcode usually picks them up.
+### 3. Set up App Group (optional — required for real Screen Time data)
 
-### 5. Build and run
+If you want the Screen Time mode to use **real usage data** instead of synthetic placeholder data, you need to register an App Group in the Apple Developer portal:
 
-- Select the **VoiceApp** scheme (not ScreenTimeReport)
-- Select your physical iPhone as the destination
-- Build and run (Cmd+R)
-- On first launch, the LLM (~850MB) and TTS (~1.3GB) models download from Hugging Face
+1. Go to [developer.apple.com/account/resources/identifiers](https://developer.apple.com/account/resources/identifiers)
+2. **Register the App Group** (Sidebar > App Groups > +) using the ID from your entitlements (e.g. `group.com.yourname.VoiceApp`)
+3. **Register both App IDs** if not already done by Xcode:
+   - `com.yourname.VoiceApp` (main app)
+   - `com.yourname.VoiceApp.ScreenTimeReport` (extension)
+4. **Enable capabilities** on both App IDs: **App Groups** (select your group) and **Family Controls**
 
-### 6. Grant permissions
+If you skip this step, the Screen Time mode works fine — it just uses synthetic placeholder data for the AI roast (see below).
+
+### 4. Build and run
+
+- Select the **VoiceApp** scheme
+- Set the destination to your **physical iPhone**
+- Build and run (`Cmd+R`)
+- On first launch, models download automatically from Hugging Face
+
+### 5. Grant permissions
 
 The app will prompt for:
-- **Microphone** — for voice cloning (recording a sample)
-- **Calendar & Reminders** — for the Schedule mode
-- **Screen Time / Family Controls** — for the Screen Time mode (tap "Grant Screen Time Access")
+
+- **Microphone** — recording a voice sample for cloning
+- **Calendar & Reminders** — for Schedule mode
+- **Screen Time / Family Controls** — for Screen Time mode
+
+## Synthetic Data
+
+The app uses **synthetic placeholder data** in two places. This is intentional — it lets you run and demo the app without requiring any real personal data.
+
+### Screen Time
+
+Apple's Screen Time APIs require a `DeviceActivityReport` extension (a separate process) to access usage data. The extension can render usage on screen, but the main app process never sees the raw data directly. To bridge this gap, the extension writes a summary to **App Group shared UserDefaults**, which the main app reads and feeds to the LLM.
+
+**If the App Group is not configured** (or on the Simulator), the app falls back to hardcoded placeholder data:
+
+```
+Instagram for 2 hours 15 minutes
+TikTok for 1 hour 45 minutes
+Safari for 1 hour 10 minutes
+Messages for 45 minutes
+YouTube for 35 minutes
+Total screen time 7 hours 20 minutes
+85 phone pickups
+```
+
+This placeholder data is defined in `VoiceApp/Services/ScreenTimeProvider.swift`. The AI will roast this synthetic usage instead of your real usage. To get real data flowing, complete the App Group setup in step 3 above.
+
+### Voice Cloning
+
+No voice samples are bundled with the app. Users record their own voice sample on-device during onboarding. Recordings are stored locally in the app's Documents directory and never uploaded anywhere.
 
 ## Architecture
 
@@ -100,50 +128,21 @@ The app will prompt for:
 | `VoiceCloningManager` | Loads Chatterbox-Turbo TTS, streams sentence-by-sentence audio |
 | `PromptBuilder` | Constructs system/user prompts per mode, normalizes text for TTS |
 | `CalendarProvider` | Reads EventKit events and reminders |
-| `ScreenTimeProvider` | Reads screen time data from App Group shared by extension |
+| `ScreenTimeProvider` | Reads screen time data from App Group (falls back to synthetic data) |
 | `ScreenTimeReport/` | DeviceActivityReport extension — reads real usage, writes to App Group |
 
-Models share MLX GPU memory and are never loaded simultaneously. The pipeline unloads the LLM before loading TTS, with a 300ms settle period for memory reclamation.
+Models share MLX GPU memory and are never loaded simultaneously. The pipeline unloads the LLM before loading TTS, with a brief settle period for memory reclamation.
 
-## Limitations
+## Known Limitations
 
-### Screen Time Data
+**LLM quality** — Qwen3-1.7B is a small language model. It may produce short or repetitive output for some prompts.
 
-The Screen Time feature has a significant architectural constraint imposed by Apple:
+**TTS speed** — Speech generation takes 5-15 seconds per sentence on iPhone. Audio streams sentence-by-sentence so you hear output before the full response is ready.
 
-- **The main app cannot read Screen Time data directly.** Apple requires a `DeviceActivityReport` extension (a separate process) to access usage data.
-- The extension renders a SwiftUI view showing real usage data on screen, but **the main app process never sees this data**.
-- To pass data from the extension to the main app (for the LLM roast), we use **App Group shared UserDefaults**. This requires the App Group to be registered in the Apple Developer portal.
+**Memory** — The LLM (~1.3GB) and TTS (~1.3GB) models cannot be loaded simultaneously. The pipeline handles swapping automatically.
 
-**To get real Screen Time data flowing to the AI:**
+**Screen Time on Simulator** — Not supported by Apple. Placeholder data is always used.
 
-1. Register App Group `group.com.incept5.VoiceApp` at [developer.apple.com](https://developer.apple.com/account/resources/identifiers)
-2. Enable **App Groups** and **Family Controls** capabilities on both:
-   - `com.incept5.VoiceApp` (main app)
-   - `com.incept5.VoiceApp.ScreenTimeReport` (extension)
-3. Rebuild — Xcode will provision the shared container
+## License
 
-**Without this setup**, the Screen Time mode falls back to placeholder data. You will see real usage rendered on screen (by the extension), but the AI will roast placeholder data instead.
-
-Screen Time APIs do not work on the iOS Simulator — placeholder data is always used there.
-
-### LLM Quality
-
-Qwen3-1.7B is a small model. It sometimes:
-- Ignores the `/no_think` flag and spends tokens on internal `<think>` reasoning instead of output
-- Echoes input data back instead of generating creative responses
-- Produces short or repetitive output
-
-A fallback extracts usable content from think blocks when the model exhausts its token budget on reasoning.
-
-### TTS
-
-- First run downloads ~1.3GB model weights
-- Generation takes 5-15 seconds per sentence on iPhone
-- Audio quality depends on the reference voice sample — longer, cleaner samples produce better clones
-
-### General
-
-- Models require ~850MB (LLM) and ~1.3GB (TTS) of memory — only one loaded at a time
-- Calendar and Screen Time features require explicit user permission grants
-- FamilyControls authorization is needed before Screen Time data is available
+MIT

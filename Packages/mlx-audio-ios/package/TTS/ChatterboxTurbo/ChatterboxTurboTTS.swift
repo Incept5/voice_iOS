@@ -35,15 +35,18 @@ actor ChatterboxTurboTTS {
   ///
   /// - Parameters:
   ///   - quantization: Quantization level (fp16, 8bit, 4bit). Default is 4bit.
-  ///   - progressHandler: Optional callback for download progress
+  ///   - modelProgressHandler: Optional callback for model download progress
+  ///   - tokenizerProgressHandler: Optional callback for tokenizer download progress
   /// - Returns: Initialized ChatterboxTurboTTS instance
   static func load(
     quantization: ChatterboxTurboQuantization = .q4,
-    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }
+    modelProgressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+    tokenizerProgressHandler: @escaping @Sendable (Progress) -> Void = { _ in }
   ) async throws -> ChatterboxTurboTTS {
     let model = try await ChatterboxTurboModel.load(
       quantization: quantization,
-      progressHandler: progressHandler
+      modelProgressHandler: modelProgressHandler,
+      tokenizerProgressHandler: tokenizerProgressHandler
     )
     return ChatterboxTurboTTS(model: model)
   }

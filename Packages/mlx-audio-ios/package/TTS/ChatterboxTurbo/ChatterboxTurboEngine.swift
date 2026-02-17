@@ -96,6 +96,17 @@ public final class ChatterboxTurboEngine: TTSEngine {
   // MARK: - TTSEngine Protocol Methods
 
   public func load(progressHandler: (@Sendable (Progress) -> Void)?) async throws {
+    try await load(
+      modelProgressHandler: progressHandler,
+      tokenizerProgressHandler: progressHandler
+    )
+  }
+
+  /// Load with separate progress handlers for model and tokenizer downloads
+  public func load(
+    modelProgressHandler: (@Sendable (Progress) -> Void)?,
+    tokenizerProgressHandler: (@Sendable (Progress) -> Void)?
+  ) async throws {
     guard !isLoaded else {
       Log.tts.debug("ChatterboxTurboEngine already loaded")
       return
@@ -107,7 +118,8 @@ public final class ChatterboxTurboEngine: TTSEngine {
     do {
       chatterboxTurboTTS = try await ChatterboxTurboTTS.load(
         quantization: quantization,
-        progressHandler: progressHandler ?? { _ in }
+        modelProgressHandler: modelProgressHandler ?? { _ in },
+        tokenizerProgressHandler: tokenizerProgressHandler ?? { _ in }
       )
 
       isLoaded = true

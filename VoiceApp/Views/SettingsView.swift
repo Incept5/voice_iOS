@@ -14,11 +14,30 @@ struct SettingsView: View {
                         Label("Model Ready", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else if manager.isLoading {
-                        HStack {
-                            ProgressView(value: manager.loadingProgress)
-                            Text("\(Int(manager.loadingProgress * 100))%")
-                                .monospacedDigit()
+                        VStack(spacing: 8) {
+                            HStack {
+                                ProgressView(value: manager.modelDownloadProgress)
+                                Text("\(Int(manager.modelDownloadProgress * 100))%")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 40, alignment: .trailing)
+                            }
+                            Text("Model")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            HStack {
+                                ProgressView(value: manager.tokenizerDownloadProgress)
+                                Text("\(Int(manager.tokenizerDownloadProgress * 100))%")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 40, alignment: .trailing)
+                            }
+                            Text("Tokenizer")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     } else {
                         Button {
